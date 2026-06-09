@@ -283,3 +283,35 @@ def test_summarize_value_confidence():
 def test_summarize_value_empty():
     s = summarize_value([])
     assert s["count"] == 0 and s["confidence"]["level"] == "none"
+
+
+# --------------------------------------------------------------------------- #
+# New: KV criteria checklist + score breakdown
+# --------------------------------------------------------------------------- #
+def test_rank_includes_kv_criteria_and_breakdown(engine):
+    out = _rank(engine, _make_sale())
+    assert out["meets_kv_criteria"] is True
+    kv = out["kv_criteria"]
+    assert kv["type"] is True
+    assert kv["within_3km"] is True
+    assert kv["within_12mo"] is True
+    assert kv["age_within_10yr"] is True
+    # score_breakdown sums to the (un-floored) score
+    assert "base" in out["score_breakdown"]
+    assert abs(sum(out["score_breakdown"].values()) - out["score"]) < 0.1
+
+
+def test_kv_criteria_fails_when_far(engine):
+    far = _make_sale(location={"type": "Point", "coordinates": [-114.0, 51.03]})  # ~3.3 km
+    out = _rank(engine, far)
+    assert out is not None  # still inside the tight 4 km filter
+    assert out["kv_criteria"]["within_3km"] is False
+    assert out["meets_kv_criteria"] is False
+
+
+def test_summarize_value_kv_match_count():
+    comps = [
+        {"sale_price": 600000, "recency_days": 30, "meets_kv_criteria": True},
+        {"sale_price": 610000, "recency_days": 40, "meets_kv_criteria": False},
+    ]
+    assert summarize_value(comps)["kv_match_count"] == 1

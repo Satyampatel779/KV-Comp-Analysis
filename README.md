@@ -89,9 +89,67 @@ UI on :8501, API on :8000. The UI reaches the API at `http://api:8000` inside th
 .venv/Scripts/python.exe scripts/smoke_test.py
 ```
 
+## How this maps to KV's brief
+
+The job (from the brief + the underwriting call): *given a subject property, retrieve and rank
+plausible comparable sales to support a valuation — and explain the reasoning*. Sam ranked
+**retrieval quality first**, valuation quality second, and warned that fully automating the pick
+would be naive — the final call stays human.
+
+| KV "trustworthy comp" criterion | How we implement it |
+|---|---|
+| Same property **type** | Hard filter on `property_type_normalized` |
+| Within **~3 km** | `$geoNear` retrieval; KV preset pins max distance to 3 km |
+| Sold in the **last 6–12 months** | KV preset pins max sale age to 365 days; recency penalty in score |
+| **Size** within ~20% | Land-size gap (documented proxy — see tradeoffs) + beds/baths/value |
+| **Age** within 10 years | `max_year_gap = 10` in the tightest profile |
+| **True sale** only (no unsold listings) | `true_sales_only` guard (positive sale price; closed sales only) |
+| **Key fields pre-filled** for 10–20 comps | Each comp returns price, $/sqm, time-adjusted price, distance, recency, beds/baths/garage, score + reasons |
+| **Decision stays human** | Exclude-comp toggles, "verify manually" panel, LLM disclaims and never makes the pick |
+| Output → **41HP template** | Underwriting CSV (blank Adj % / Adj $ / notes) + PDF handoff |
+| Per-comp **KV ✓** | `kv_criteria` checklist + `meets_kv_criteria`; UI shows "X of N meet all criteria" |
+
+## Approach
+
+1. **Deterministic retrieval + ranking** (`comp_ranking_service.py`): a widening multi-pass search
+   (same-community → same-city × tight/balanced/wide profiles) seeded by `$geoNear`, then a
+   transparent additive score (distance, recency, value/size/age/bed-bath gaps, community bonus).
+   Every comp carries a `score_breakdown` and a `kv_criteria` checklist.
+2. **Grounded LLM for explanation, not decisions** (`llm_service.py`, Groq): temperature 0, a fenced
+   `DATA` block, and hard rules — use only the provided comps, never invent numbers, cite `[#n]`,
+   and end memos with the qualitative factors a human must verify.
+3. **Thin clients**: a FastAPI contract (`/subject-search`, `/rank-comps`, `/ask`, `/ask/stream`) and
+   a Streamlit UI that does no ranking itself.
+
+## Why deterministic retrieval, not an autonomous agent
+
+The brief says "agent" and rewards tool use, but in *lending* the comp set must be reproducible and
+auditable. So the retrieval/ranking is deterministic code (same inputs → same comps, with a visible
+score breakdown), and the LLM is confined to explaining that output under strict anti-fabrication
+rules. That's a deliberate trade: less "agentic flash," more trust — which is what an underwriter
+signing off on a loan actually needs. Swapping in an LLM tool-calling loop over the same endpoints
+is a small change if desired.
+
+## Tradeoffs & what we cut
+
+- **No living-area (GLA/sqft).** The open assessment data has *land* size, not finished floor area —
+  so "size within 20%" uses a land-size proxy plus beds/baths/assessed-value. The weighted engine
+  ingests true GLA in ~one line if the dataset provides it; we chose to be explicit rather than fake it.
+- **Calgary MVP only** on the Atlas free tier (120k properties / 69k synthetic sales) — not the full
+  578k set, no Edmonton, no MLS feed.
+- **Synthetic sales** (mirroring the brief's anonymized-data approach); the engine is source-agnostic.
+- **No full automation** — by design; the underwriter makes the final pick.
+
+## Edge cases handled
+
+- Subject missing required fields → `422`; subject not found → `404`.
+- Subject not in the dataset (e.g. a builder's new build) → **manual/off-market entry**.
+- No comps after the widest profile → UI explains and suggests loosening.
+- Price outliers flagged (IQR); thin/wide/stale comp sets lower the **confidence** score.
+- Non-true-sales excluded via the `true_sales_only` guard.
+
 ## Scope / notes
 
-- Calgary MVP dataset only (Atlas free tier; the full 578k-property set is not loaded).
-- Tuning flags (`max_distance_km`, `max_sale_age_days`, `same_community_only`) only ever
-  *tighten* the engine's built-in profiles — callers can't widen past its safe ceilings.
+- Tuning flags only ever *tighten* the engine's built-in profiles — callers can't widen past its ceilings.
 - Auth is off by default; set `API_KEY` to require an `x-api-key` header on every request.
+- See [`LOOM_SCRIPT.md`](LOOM_SCRIPT.md) for the < 10-min walkthrough outline.

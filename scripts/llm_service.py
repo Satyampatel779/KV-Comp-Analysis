@@ -40,8 +40,13 @@ SYSTEM_PROMPT = (
 SUMMARY_INSTRUCTION = (
     "Write a brief comp-analysis summary for an underwriter: (1) the implied "
     "value range with a one-line basis, (2) the 2-3 strongest comparable sales "
-    "and why they are strong, (3) any caveats (thin data, wide spread, stale "
-    "sales, distance). Keep it under 180 words."
+    "(cite [#n]) and why they are strong, (3) data caveats (thin data, wide "
+    "spread, stale sales, distance). (4) End with a 'Verify manually' line "
+    "listing factors NOT captured in the data that a human must confirm before "
+    "relying on these comps: what each property backs onto, walkout basement, "
+    "legal/secondary suite, renovation quality, and whether each sale was truly "
+    "arms-length. Do not assert values for those factors — only flag them as "
+    "unknowns to check. Keep it under 200 words."
 )
 
 

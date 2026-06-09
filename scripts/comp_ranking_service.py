@@ -282,6 +282,7 @@ def summarize_value(comparables: list[dict[str, Any]]) -> dict[str, Any]:
         "price_per_sqm_median": round(statistics.median(ppsqm), 2) if ppsqm else None,
         "time_adjusted_median": round(statistics.median(taj)) if taj else None,
         "median_recency_days": int(median_recency) if median_recency is not None else None,
+        "kv_match_count": sum(1 for c in comparables if c.get("meets_kv_criteria")),
         "confidence": {"score": score, "level": level, "factors": factors or ["solid comp set"]},
     }
 
@@ -431,6 +432,7 @@ class CompRankingService:
         weights: ScoringWeights | None = None,
         annual_appreciation_rate: float = 0.0,
         use_geo: bool = True,
+        true_sales_only: bool = True,
     ) -> dict[str, Any]:
         weights = weights or DEFAULT_WEIGHTS
         subject_property = subject.get("property") or {}
@@ -480,6 +482,12 @@ class CompRankingService:
                 }
                 if query_pass.same_community_only and subject_community.get("code"):
                     query["community.code"] = subject_community.get("code")
+                if true_sales_only:
+                    # Only genuine closed sales count as comps — exclude unsold listings
+                    # and $0 placeholders (a top reason humans reject candidates). A real
+                    # MLS feed would also filter transaction_type/status; this dataset
+                    # holds closed sales, so a positive sale_price is the available guard.
+                    query["sale_price"] = {"$gt": 0}
 
                 for sale in self._iter_candidates(
                     query, profile, subject_location, max_results_per_pass, use_geo
@@ -545,6 +553,7 @@ class CompRankingService:
                 "max_results_per_pass": max_results_per_pass,
                 "annual_appreciation_rate": annual_appreciation_rate,
                 "geo_retrieval": bool(use_geo and subject_location),
+                "true_sales_only": true_sales_only,
             },
             "analysis": summarize_value(top),
             "comparables": top,
@@ -695,30 +704,53 @@ class CompRankingService:
         garage_gap = abs_gap(subject_garage, snapshot.get("garage_count"))
 
         score = w.base
+        breakdown: dict[str, float] = {"base": w.base}
+
+        def _pen(key: str, raw: float, cap: float) -> None:
+            nonlocal score
+            penalty = -clamp_penalty(raw, cap)
+            breakdown[key] = round(penalty, 2)
+            score += penalty
+
         if distance_km is not None:
-            score -= clamp_penalty(distance_km * w.distance_per_km, w.distance_cap)
+            _pen("distance", distance_km * w.distance_per_km, w.distance_cap)
         else:
+            breakdown["distance"] = -w.distance_missing_penalty
             score -= w.distance_missing_penalty
-        score -= clamp_penalty(recency_days / 30.0 * w.recency_per_month, w.recency_cap)
-        score -= clamp_penalty(assessed_gap_ratio * 100.0 * w.value_gap_factor, w.value_gap_cap)
+        _pen("recency", recency_days / 30.0 * w.recency_per_month, w.recency_cap)
+        _pen("value_gap", assessed_gap_ratio * 100.0 * w.value_gap_factor, w.value_gap_cap)
         if land_gap_ratio is not None:
-            score -= clamp_penalty(land_gap_ratio * 100.0 * w.land_gap_factor, w.land_gap_cap)
+            _pen("land_gap", land_gap_ratio * 100.0 * w.land_gap_factor, w.land_gap_cap)
         if year_gap is not None:
-            score -= clamp_penalty(year_gap * w.year_gap_per_year, w.year_gap_cap)
+            _pen("year_gap", year_gap * w.year_gap_per_year, w.year_gap_cap)
         if bed_gap is not None:
-            score -= clamp_penalty(bed_gap * w.bed_gap_per, w.bed_gap_cap)
+            _pen("bed_gap", bed_gap * w.bed_gap_per, w.bed_gap_cap)
         if bath_gap is not None:
-            score -= clamp_penalty(bath_gap * w.bath_gap_per, w.bath_gap_cap)
+            _pen("bath_gap", bath_gap * w.bath_gap_per, w.bath_gap_cap)
         if garage_gap is not None:
-            score -= clamp_penalty(garage_gap * w.garage_gap_per, w.garage_gap_cap)
+            _pen("garage_gap", garage_gap * w.garage_gap_per, w.garage_gap_cap)
 
         same_community = (sale.get("community") or {}).get("code") == subject_community.get("code")
         if same_community:
+            breakdown["same_community"] = w.same_community_bonus
             score += w.same_community_bonus
         if query_pass.same_community_only:
+            breakdown["same_community_pass"] = w.same_community_pass_bonus
             score += w.same_community_pass_bonus
 
         score = max(0.0, round(score, 2))
+
+        # KV's trustworthy-comp checklist (from the underwriting call): type, within
+        # ~3 km, sold within 12 months, age within 10 yr, size within 20%. We have no
+        # living-area (GLA) field, so size uses the land-size gap as a documented proxy.
+        kv_criteria = {
+            "type": True,  # candidates are pre-filtered to the subject's type
+            "within_3km": (distance_km <= 3.0) if distance_km is not None else None,
+            "within_12mo": recency_days <= 365,
+            "age_within_10yr": (year_gap <= 10) if year_gap is not None else None,
+            "size_within_20pct_land_proxy": (land_gap_ratio <= 0.20) if land_gap_ratio is not None else None,
+        }
+        meets_kv_criteria = all(v for v in kv_criteria.values() if v is not None)
 
         sale_price = sale.get("sale_price")
         land = snapshot.get("land_size_sqm")
@@ -766,6 +798,9 @@ class CompRankingService:
             "bathrooms_gap": bath_gap,
             "matched_profile": profile.label,
             "matched_query_pass": query_pass.label,
+            "score_breakdown": breakdown,
+            "kv_criteria": kv_criteria,
+            "meets_kv_criteria": meets_kv_criteria,
             "reasons": reasons,
             "property_snapshot": snapshot,
         }

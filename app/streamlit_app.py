@@ -240,10 +240,10 @@ def build_pdf(subject: dict[str, Any], band: dict[str, Any] | None,
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, _latin("KV Capital — Comparable Sales Report"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 10, _latin("Comparable Sales — Underwriting Handoff (41HP)"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(120)
-    pdf.cell(0, 5, _latin("Automated estimate — not a formal appraisal or financial advice."), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, _latin("Automated comp shortlist — underwriter completes adjustments & final value. Not a formal appraisal."), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0)
     pdf.ln(3)
 
@@ -269,6 +269,11 @@ def build_pdf(subject: dict[str, Any], band: dict[str, Any] | None,
             f"from {band['count']} comps\n"
             f"Confidence: {band['confidence']}/100 ({band['level']}) - {', '.join(band['factors'])}"
         ))
+        pdf.ln(1)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, _latin("Subject internal value (underwriter to complete): _________________"),
+                 new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_font("Helvetica", "", 10)
         pdf.ln(2)
 
     # optional aerial of the subject
@@ -284,9 +289,9 @@ def build_pdf(subject: dict[str, Any], band: dict[str, Any] | None,
             pass
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 7, _latin("Comparable sales"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    headers = ["#", "Address", "Sale $", "Dist km", "Age d", "Score"]
-    widths = [8, 78, 32, 22, 20, 20]
+    pdf.cell(0, 7, _latin("Comparable sales  (complete Adj % / Adj $ in the 41HP template)"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    headers = ["#", "Address", "Sale $", "Today-adj $", "Score", "Adj %", "Adj $"]
+    widths = [8, 56, 26, 30, 16, 18, 26]
     pdf.set_font("Helvetica", "B", 9)
     for h, w in zip(headers, widths):
         pdf.cell(w, 6, _latin(h), border=1)
@@ -295,11 +300,12 @@ def build_pdf(subject: dict[str, Any], band: dict[str, Any] | None,
     for i, c in enumerate(comps, start=1):
         row = [
             str(i),
-            (c.get("address") or "-")[:46],
+            (c.get("address") or "-")[:34],
             fmt_money(c.get("sale_price")),
-            f"{c.get('distance_km')}" if c.get("distance_km") is not None else "-",
-            str(c.get("recency_days") if c.get("recency_days") is not None else "-"),
+            fmt_money(c.get("time_adjusted_price")),
             str(c.get("score")),
+            "",  # Adj % — underwriter completes
+            "",  # Adj $ — underwriter completes
         ]
         for val, w in zip(row, widths):
             pdf.cell(w, 6, _latin(val), border=1)
@@ -362,18 +368,26 @@ else:
 st.sidebar.divider()
 st.sidebar.subheader("Ranking controls")
 limit = st.sidebar.slider("Number of comps", 1, 50, 12)
+kv_preset = st.sidebar.checkbox(
+    "✅ KV comp criteria (≤3 km · ≤12 mo · ±10 yr · ±20% size)", value=True,
+    help="Sam's trust rules from the underwriting call: same type, within ~3 km, sold within "
+         "12 months, age within 10 years, size within ~20%.")
 same_community_only = st.sidebar.checkbox("Same community only", value=False)
 use_geo = st.sidebar.checkbox("Geo-aware retrieval ($geoNear)", value=True)
 appr = st.sidebar.slider("Annual market trend (%)", -10.0, 15.0, 3.0, 0.5,
                          help="Applied to comp sale prices → time-adjusted 'today's equivalent'.")
-use_max_distance = st.sidebar.checkbox("Cap distance (km)", value=False)
-max_distance_km = (
-    st.sidebar.number_input("Max distance (km)", 0.5, 15.0, 5.0, 0.5) if use_max_distance else None
-)
-use_max_age = st.sidebar.checkbox("Cap sale age (days)", value=False)
-max_sale_age_days = (
-    st.sidebar.number_input("Max sale age (days)", 30, 730, 365, 30) if use_max_age else None
-)
+if kv_preset:
+    max_distance_km, max_sale_age_days = 3.0, 365
+    st.sidebar.caption("Filters pinned to KV criteria (≤3 km, ≤12 mo). Uncheck to tune manually.")
+else:
+    use_max_distance = st.sidebar.checkbox("Cap distance (km)", value=False)
+    max_distance_km = (
+        st.sidebar.number_input("Max distance (km)", 0.5, 15.0, 5.0, 0.5) if use_max_distance else None
+    )
+    use_max_age = st.sidebar.checkbox("Cap sale age (days)", value=False)
+    max_sale_age_days = (
+        st.sidebar.number_input("Max sale age (days)", 30, 730, 365, 30) if use_max_age else None
+    )
 
 with st.sidebar.expander("⚖️ Scoring weights"):
     w_dist = st.slider("Distance penalty / km", 0.0, 25.0, 9.0, 0.5)
@@ -575,7 +589,7 @@ if {"latitude", "longitude"}.issubset(df.columns):
 
 show_cols = ["rank", "include", "address", "community", "sale_date", "sale_price",
              "time_adjusted_price", "price_per_sqm", "distance_km", "recency_days",
-             "assessed_value_gap_ratio", "score", "outlier", "map"]
+             "assessed_value_gap_ratio", "score", "meets_kv_criteria", "outlier", "map"]
 show_cols = [c for c in show_cols if c in df.columns]
 edited = st.data_editor(
     df[show_cols],
@@ -588,6 +602,7 @@ edited = st.data_editor(
         "sale_price": st.column_config.NumberColumn("Sale $", format="$%d"),
         "time_adjusted_price": st.column_config.NumberColumn("Today-adj $", format="$%d"),
         "price_per_sqm": st.column_config.NumberColumn("$/sqm", format="$%.0f"),
+        "meets_kv_criteria": st.column_config.CheckboxColumn("KV ✓", help="Meets ALL of KV's comp criteria"),
         "outlier": st.column_config.CheckboxColumn("⚠️", help="Price is an IQR outlier"),
         "map": st.column_config.LinkColumn("Map", display_text="📍"),
     },
@@ -595,7 +610,10 @@ edited = st.data_editor(
 )
 
 included_mask = list(edited["include"]) if "include" in edited else [True] * len(comps_all)
-included = [c for c, keep in zip(comps_all, included_mask) if keep]
+included_with_rank = [
+    (i + 1, c) for i, (c, keep) in enumerate(zip(comps_all, included_mask)) if keep
+]
+included = [c for _, c in included_with_rank]
 band = recompute_band(included)
 
 
@@ -613,6 +631,36 @@ if band:
         f"**Implied value band:** {fmt_money(band['min'])} – {fmt_money(band['max'])} "
         f"(median {fmt_money(band['median'])}). Confidence {band['level']} — {', '.join(band['factors'])}."
     )
+    kv_ok = sum(1 for c in included if c.get("meets_kv_criteria"))
+    st.caption(
+        f"✅ **{kv_ok} of {len(included)}** included comps meet *all* of KV's criteria "
+        "(type · ≤3 km · ≤12 mo · ±10 yr · ±20% size-proxy)."
+    )
+
+with st.expander("⚠️ Factors to verify manually (not in the data)"):
+    st.markdown(
+        "These materially affect value but aren't in public records — an underwriter must confirm "
+        "them before relying on any comp (per KV's underwriting call):\n"
+        "- **What the property backs onto** — greenspace/park vs busy road or commercial\n"
+        "- **Walkout basement** / lot grade\n"
+        "- **Legal or secondary suite**\n"
+        "- **Renovation quality & condition**\n"
+        "- **Arms-length sale?** — exclude family transfers, builder inventory, distress sales\n\n"
+        "_This tool produces the ranked shortlist — the final comp selection and value stay with "
+        "the underwriter (decision support, not automation)._"
+    )
+
+with st.expander("🔍 Score breakdown — how each comp's score is built"):
+    rows = []
+    for rank, c in included_with_rank:
+        b = c.get("score_breakdown") or {}
+        rows.append({"#": rank, "address": c.get("address"), **b, "= score": c.get("score")})
+    if rows:
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+        st.caption(
+            "Each column is the points a factor adds/subtracts from the base 100 "
+            "(penalties negative, bonuses positive). Weights are tunable in the sidebar."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -691,17 +739,41 @@ if not cdf.empty:
 
 
 # --------------------------------------------------------------------------- #
-# Exports: CSV + PDF
+# Exports: underwriting handoff (CSV with adjustment columns) + PDF
 # --------------------------------------------------------------------------- #
 ex1, ex2, _ = st.columns([1, 1, 2])
-csv = pd.DataFrame(included).to_csv(index=False).encode("utf-8")
-ex1.download_button("⬇️ CSV", csv, file_name=f"comps_{subject.get('property_id') or 'manual'}.csv",
-                    mime="text/csv", width="stretch")
+und_rows = []
+for rank, c in included_with_rank:
+    und_rows.append({
+        "rank": rank,
+        "address": c.get("address"),
+        "community": c.get("community"),
+        "sale_date": (c.get("sale_date") or "")[:10],
+        "sale_price": c.get("sale_price"),
+        "time_adjusted_price": c.get("time_adjusted_price"),
+        "price_per_sqm": c.get("price_per_sqm"),
+        "distance_km": c.get("distance_km"),
+        "recency_days": c.get("recency_days"),
+        "bedrooms": c.get("bedrooms"),
+        "bathrooms": c.get("bathrooms"),
+        "garage_count": c.get("garage_count"),
+        "meets_kv_criteria": c.get("meets_kv_criteria"),
+        "score": c.get("score"),
+        # blank columns for the underwriter to complete in the 41HP template
+        "adjustment_pct": "",
+        "adjusted_value": "",
+        "underwriter_notes": "",
+    })
+csv = pd.DataFrame(und_rows).to_csv(index=False).encode("utf-8")
+ex1.download_button("⬇️ Underwriting CSV (41HP)", csv,
+                    file_name=f"underwriting_{subject.get('property_id') or 'manual'}.csv",
+                    mime="text/csv", width="stretch",
+                    help="Comps + blank adjustment columns to drop into the 41HP template.")
 if _HAS_FPDF:
     try:
         pdf_bytes = build_pdf(result.get("subject", subject), band, included, ss.get("last_memo"))
-        ex2.download_button("📄 PDF report", pdf_bytes,
-                            file_name=f"comp_report_{subject.get('property_id') or 'manual'}.pdf",
+        ex2.download_button("📄 PDF handoff", pdf_bytes,
+                            file_name=f"comp_handoff_{subject.get('property_id') or 'manual'}.pdf",
                             mime="application/pdf", width="stretch")
     except Exception as exc:  # noqa: BLE001
         ex2.caption(f"PDF unavailable: {exc}")
