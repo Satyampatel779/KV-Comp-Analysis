@@ -13,15 +13,21 @@ import math
 import pytest
 
 from comp_ranking_service import (
+    DEFAULT_WEIGHTS,
     FILTER_PROFILES,
     CompRankingService,
     QueryPass,
+    ScoringWeights,
+    abs_gap,
+    address_tokens,
     clamp_penalty,
     haversine_km,
     lat_lon,
     normalize_whitespace,
     parse_sale_datetime,
     safe_ratio_gap,
+    summarize_value,
+    token_regex,
 )
 
 TIGHT = FILTER_PROFILES[0]
@@ -151,17 +157,23 @@ def _make_sale(**overrides):
     return sale
 
 
-def _rank(engine, sale, profile=TIGHT):
+def _rank(engine, sale, profile=TIGHT, *, weights=DEFAULT_WEIGHTS, beds=None, baths=None,
+          garage=None, rate=0.0):
     return engine._rank_candidate(
         subject=SUBJECT,
         subject_location=SUBJECT_LOCATION,
         subject_assessed_value=600000.0,
         subject_year_built=2000,
         subject_land_size=500.0,
+        subject_bedrooms=beds,
+        subject_bathrooms=baths,
+        subject_garage=garage,
         subject_community=SUBJECT_COMMUNITY,
         sale=sale,
         profile=profile,
         query_pass=SAME_COMMUNITY,
+        weights=weights,
+        annual_appreciation_rate=rate,
     )
 
 
@@ -205,3 +217,69 @@ def test_rank_same_community_scores_higher(engine):
     diff = _rank(engine, _make_sale(community={"code": "XYZ", "name": "OTHER"}))
     assert same is not None and diff is not None
     assert same["score"] > diff["score"]
+
+
+# --------------------------------------------------------------------------- #
+# New: weights, time-adjustment, $/sqm, bed/bath, search tokens, value summary
+# --------------------------------------------------------------------------- #
+def test_scoring_weights_from_dict_overrides_only_named():
+    w = ScoringWeights.from_dict({"distance_per_km": 20.0, "bogus": 1.0})
+    assert w.distance_per_km == 20.0
+    assert w.recency_per_month == DEFAULT_WEIGHTS.recency_per_month  # untouched
+    assert not hasattr(w, "bogus")
+
+
+def test_higher_distance_weight_lowers_score(engine):
+    far = _make_sale(location={"type": "Point", "coordinates": [-114.02, 51.0]})  # ~1.4 km
+    base = _rank(engine, far)
+    heavy = _rank(engine, far, weights=ScoringWeights.from_dict({"distance_per_km": 25.0}))
+    assert heavy["score"] < base["score"]
+
+
+def test_time_adjusted_price_and_ppsqm(engine):
+    out = _rank(engine, _make_sale(), rate=0.10)
+    assert out["price_per_sqm"] == pytest.approx(605000.0 / 510.0, abs=0.1)
+    # positive appreciation over a positive age => time-adjusted >= nominal
+    assert out["time_adjusted_price"] >= out["sale_price"]
+
+
+def test_bedroom_gap_penalizes(engine):
+    # subject 5 beds vs comp 4 beds (snapshot default) -> penalty when subject supplies beds
+    with_beds = _rank(engine, _make_sale(snapshot={"bedrooms": 4}), beds=5)
+    without = _rank(engine, _make_sale(snapshot={"bedrooms": 4}), beds=None)
+    assert with_beds["score"] < without["score"]
+    assert with_beds["bedrooms_gap"] == 1.0
+
+
+def test_abs_gap():
+    assert abs_gap(4, 6) == 2.0
+    assert abs_gap(None, 6) is None
+    assert abs_gap(4, None) is None
+
+
+def test_address_tokens_and_token_regex():
+    assert address_tokens("  120   deercrest  cl ") == ["120", "DEERCREST", "CL"]
+    # full street-type word matches its abbreviation form
+    assert "DR" in token_regex("DRIVE")
+    # quadrant token is word-anchored (won't match inside LYNNWOOD)
+    assert token_regex("NW").startswith(r"\b")
+
+
+def test_summarize_value_confidence():
+    comps = [
+        {"sale_price": 600000, "recency_days": 30, "price_per_sqm": 1000, "time_adjusted_price": 605000},
+        {"sale_price": 610000, "recency_days": 40, "price_per_sqm": 1010, "time_adjusted_price": 615000},
+        {"sale_price": 590000, "recency_days": 50, "price_per_sqm": 990, "time_adjusted_price": 595000},
+        {"sale_price": 605000, "recency_days": 60, "price_per_sqm": 1005, "time_adjusted_price": 610000},
+        {"sale_price": 615000, "recency_days": 20, "price_per_sqm": 1020, "time_adjusted_price": 620000},
+        {"sale_price": 600000, "recency_days": 35, "price_per_sqm": 1000, "time_adjusted_price": 606000},
+    ]
+    s = summarize_value(comps)
+    assert s["count"] == 6
+    assert s["min_price"] == 590000 and s["max_price"] == 615000
+    assert s["confidence"]["level"] == "high"  # many comps, tight spread, recent
+
+
+def test_summarize_value_empty():
+    s = summarize_value([])
+    assert s["count"] == 0 and s["confidence"]["level"] == "none"

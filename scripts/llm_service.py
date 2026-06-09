@@ -9,6 +9,8 @@ kept in module-level pure functions so it can be unit-tested without a network.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -17,12 +19,13 @@ SYSTEM_PROMPT = (
     "You are KV Capital's Calgary residential comp-analysis assistant. "
     "Answer ONLY using the structured data provided below (the subject property "
     "and its ranked comparable sales). Do not invent facts, sales, or attributes "
-    "that are not present in the data. Be concise and specific, and cite "
-    "comparable sales by address, price, and date when relevant. "
+    "that are not present in the data, and do not use outside market knowledge. "
+    "Cite comparables by their list number in square brackets, e.g. [#1], [#2], so "
+    "each claim is traceable to a specific comp row. "
     "When asked for a value or offer estimate, give a RANGE grounded in the "
     "comparable sale prices, briefly explain the basis, and note it is an "
     "automated estimate — not a formal appraisal or financial advice. "
-    "If the provided data is insufficient to answer, say so plainly."
+    "If the provided data is insufficient to answer, say so plainly rather than guessing."
 )
 
 SUMMARY_INSTRUCTION = (
@@ -156,3 +159,51 @@ class LLMService:
             "mode": mode,
             "used_comps": min(len(comparables), 12),
         }
+
+    def stream(
+        self,
+        *,
+        subject: dict[str, Any],
+        comparables: list[dict[str, Any]],
+        question: str | None = None,
+        mode: str = "qa",
+        temperature: float = 0.2,
+        max_tokens: int = 700,
+    ) -> Iterator[str]:
+        """Yield answer text deltas as they arrive (Groq SSE streaming)."""
+        if not self.configured:
+            raise LLMUnavailable("LLM is not configured. Set GROQ_API_KEY.")
+
+        messages = build_messages(subject, comparables, question, mode)
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json=payload,
+                ) as resp:
+                    if resp.status_code != 200:
+                        body = resp.read().decode("utf-8", "replace")[:300]
+                        raise LLMUnavailable(f"LLM upstream error {resp.status_code}: {body}")
+                    for line in resp.iter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data = line[len("data: "):].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            delta = json.loads(data)["choices"][0]["delta"].get("content")
+                        except (KeyError, IndexError, json.JSONDecodeError):
+                            continue
+                        if delta:
+                            yield delta
+        except httpx.HTTPError as exc:
+            raise LLMUnavailable(f"LLM streaming request failed: {exc}") from exc

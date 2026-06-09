@@ -10,25 +10,29 @@ Run (from the repo root):
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from api_config import Settings, get_settings
 from api_models import (
     AskRequest,
     AskResponse,
     HealthResponse,
+    ManualSubject,
     RankCompsRequest,
     RankCompsResponse,
     SubjectSearchResponse,
 )
-from comp_ranking_service import CompRankingService
+from comp_ranking_service import CompRankingService, ScoringWeights
 from llm_service import LLMService, LLMUnavailable
 
 app = FastAPI(
     title="KV Comp Analysis API",
-    version="1.0.0",
-    description="Ranked comparable-sales shortlist for a subject property (Calgary MVP).",
+    version="1.1.0",
+    description="Ranked comparable-sales shortlist + grounded LLM analysis (Calgary MVP).",
 )
 
 # Permissive CORS so browser clients and other HTTP callers can use the service.
@@ -50,6 +54,7 @@ def get_service() -> CompRankingService:
     if _service is None:
         settings = get_settings()
         _service = CompRankingService(uri=settings.mongodb_uri, db_name=settings.mongodb_db)
+        _service.ensure_indexes()  # idempotent; powers geo retrieval + the hot query
     return _service
 
 
@@ -72,6 +77,41 @@ def require_api_key(
     """Enforce ``x-api-key`` only when API_KEY is configured (off by default)."""
     if settings.api_key and x_api_key != settings.api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing x-api-key header.")
+
+
+def _resolve_subject(
+    service: CompRankingService,
+    *,
+    subject_property_id: str | None,
+    subject_address: str | None,
+    subject_manual: ManualSubject | None,
+) -> dict[str, Any]:
+    """Resolve a subject from the DB, or build one from manual/off-market input."""
+    if subject_manual is not None:
+        return subject_manual.to_subject_doc()
+    try:
+        return service.get_subject_property(property_id=subject_property_id, address=subject_address)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _rank(service: CompRankingService, subject: dict[str, Any], payload: Any, max_per_pass: int) -> dict[str, Any]:
+    try:
+        return service.find_ranked_comps(
+            subject=subject,
+            limit=payload.limit,
+            max_results_per_pass=max_per_pass,
+            same_community_only=payload.same_community_only,
+            max_distance_km=payload.max_distance_km,
+            max_sale_age_days=payload.max_sale_age_days,
+            weights=ScoringWeights.from_dict(payload.weights),
+            annual_appreciation_rate=payload.annual_appreciation_rate,
+            use_geo=payload.use_geo,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -115,28 +155,13 @@ def rank_comps(
     payload: RankCompsRequest,
     service: CompRankingService = Depends(get_service),
 ) -> RankCompsResponse:
-    try:
-        subject = service.get_subject_property(
-            property_id=payload.subject_property_id,
-            address=payload.subject_address,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        result = service.find_ranked_comps(
-            subject=subject,
-            limit=payload.limit,
-            max_results_per_pass=payload.max_results_per_pass,
-            same_community_only=payload.same_community_only,
-            max_distance_km=payload.max_distance_km,
-            max_sale_age_days=payload.max_sale_age_days,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
+    subject = _resolve_subject(
+        service,
+        subject_property_id=payload.subject_property_id,
+        subject_address=payload.subject_address,
+        subject_manual=payload.subject_manual,
+    )
+    result = _rank(service, subject, payload, payload.max_results_per_pass)
     return RankCompsResponse(**result)
 
 
@@ -152,32 +177,15 @@ def ask(
 ) -> AskResponse:
     """Grounded LLM Q&A (or comp summary) for a subject and its ranked comps."""
     if not llm.configured:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM is not configured. Set GROQ_API_KEY (and optionally GROQ_MODEL).",
-        )
+        raise HTTPException(status_code=503, detail="LLM is not configured. Set GROQ_API_KEY.")
 
-    try:
-        subject = service.get_subject_property(
-            property_id=payload.subject_property_id,
-            address=payload.subject_address,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        result = service.find_ranked_comps(
-            subject=subject,
-            limit=payload.limit,
-            max_results_per_pass=250,
-            same_community_only=payload.same_community_only,
-            max_distance_km=payload.max_distance_km,
-            max_sale_age_days=payload.max_sale_age_days,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    subject = _resolve_subject(
+        service,
+        subject_property_id=payload.subject_property_id,
+        subject_address=payload.subject_address,
+        subject_manual=payload.subject_manual,
+    )
+    result = _rank(service, subject, payload, 250)
 
     try:
         answer = llm.ask(
@@ -190,3 +198,35 @@ def ask(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return AskResponse(subject=result["subject"], **answer)
+
+
+@app.post("/ask/stream", dependencies=[Depends(require_api_key)])
+def ask_stream(
+    payload: AskRequest,
+    service: CompRankingService = Depends(get_service),
+    llm: LLMService = Depends(get_llm),
+) -> StreamingResponse:
+    """Same as /ask but streams the answer token-by-token as text/plain."""
+    if not llm.configured:
+        raise HTTPException(status_code=503, detail="LLM is not configured. Set GROQ_API_KEY.")
+
+    subject = _resolve_subject(
+        service,
+        subject_property_id=payload.subject_property_id,
+        subject_address=payload.subject_address,
+        subject_manual=payload.subject_manual,
+    )
+    result = _rank(service, subject, payload, 250)
+
+    def token_stream():
+        try:
+            yield from llm.stream(
+                subject=result["subject"],
+                comparables=result["comparables"],
+                question=payload.question,
+                mode=payload.mode,
+            )
+        except LLMUnavailable as exc:
+            yield f"\n\n⚠️ {exc}"
+
+    return StreamingResponse(token_stream(), media_type="text/plain; charset=utf-8")

@@ -18,6 +18,7 @@ ranking logic over HTTP so a frontend, CLI, or any HTTP client can call it relia
 | GET    | `/subject-search` | Resolve a subject by address/property_id.            |
 | POST   | `/rank-comps`     | Ranked comparable-sales shortlist for a subject.     |
 | POST   | `/ask`            | Grounded LLM Q&A / comp memo for a subject.          |
+| POST   | `/ask/stream`     | Same as `/ask` but streams the answer (text/plain).  |
 
 Interactive docs once running: `http://localhost:8000/docs`.
 
@@ -107,6 +108,22 @@ Response (truncated):
 
 Errors: `400` (both/neither subject provided), `404` (subject not found), `422` (subject
 missing required fields like `assessed_value`).
+
+#### v1.1 optional fields (all backward-compatible)
+`/rank-comps` and `/ask` also accept:
+- `subject_manual` — an off-market subject instead of a DB lookup. Provide **exactly one** of
+  `subject_property_id` / `subject_address` / `subject_manual`. Shape:
+  `{ "property_type_normalized": "detached", "assessed_value": 600000, "year_built": 2005,
+  "land_size_sqm": 500, "bedrooms": 4, "bathrooms": 3, "garage_count": 2,
+  "latitude": 51.045, "longitude": -114.06, "community_name": "…" }`
+- `weights` — override scoring knobs, e.g. `{"distance_per_km": 12, "recency_per_month": 1.5,
+  "value_gap_factor": 0.5, "same_community_bonus": 10}` (any subset; unset knobs keep defaults).
+- `annual_appreciation_rate` — e.g. `0.03`; drives each comp's `time_adjusted_price`.
+- `use_geo` — `true` (default) uses `$geoNear` retrieval when the subject has coordinates.
+
+Each comp now also includes `time_adjusted_price`, `price_per_sqm`, `bedrooms`/`bathrooms`/
+`garage_count` (+ gaps). The response carries an `analysis` block: `median_price`, `min/max_price`,
+`price_per_sqm_median`, `time_adjusted_median`, and a `confidence` `{score, level, factors}`.
 
 ### `POST /ask`
 Grounded LLM Q&A (Groq, OpenAI-compatible) over the subject + its ranked comps. The model is

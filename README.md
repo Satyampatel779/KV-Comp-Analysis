@@ -23,12 +23,30 @@ Streamlit UI  ──HTTP──▶  FastAPI  ──▶  CompRankingService  ─�
 
 ## Quality-of-life features
 
-- 🤖 **LLM property Q&A** — ask "what's a fair offer range?", "why is comp #1 ranked first?";
-  one-click **comp memo** for underwriting. Grounded on the live ranked comps via `POST /ask`.
-- 🛰️ **Property imagery** — no-key aerial (Esri World Imagery) + clickable Google Maps / Street View
-  links for the subject and every comp. Set `GOOGLE_MAPS_API_KEY` to also render inline Street View photos.
-- 💲 **Implied value band** (median + min/max of comp prices) and a clickable comps table.
-- ⬇️ **CSV export** of the shortlist for handoff.
+**Search & input**
+- 🔎 **Tolerant search** — partial words, any order, abbreviation-aware (`lynnwood dr` finds `… DR …`),
+  word-anchored so `NW` no longer matches inside `LYNNWOOD`. Recent searches + ⭐ saved subjects.
+- ✍️ **Manual / off-market subject** — rank comps for a property not in the dataset (typed traits).
+- 🔗 **Shareable permalink** — the URL carries the subject (`?pid=…`) so a comp set can be re-opened.
+
+**Analysis**
+- ⚖️ **Tunable scoring weights** (distance / recency / value-gap / community bonus) with **live re-rank**.
+- 💲 **$/sqm** and **time-adjusted "today's-equivalent" prices** (configurable market-trend rate).
+- ✅ **Exclude-a-comp toggles** that recompute the value band; **IQR outlier flags**; **confidence score**
+  (driven by comp count, price spread, recency). Bedrooms/bathrooms/garage feed scoring for manual subjects.
+
+**Visualization & export**
+- 🗺️ **Interactive map** (pydeck): subject pin, comps colored by recency, subject→comp lines, hover tooltips.
+  The subject **aerial view is pinned** to the exact house. Charts: price histogram, price-vs-distance, timeline.
+- 📄 **One-click PDF comp report** (subject + value band + comps table + memo + aerial) and CSV export.
+
+**LLM assistant (Groq, grounded)**
+- 🤖 **Streaming** Q&A + one-click **comp memo**; cites comps as `[#1]`, `[#2]` matching the table.
+  Server-side via `POST /ask` and `POST /ask/stream`; grounded only on the live ranked comps.
+
+**Engine / ops**
+- 🛰️ **Geo-aware retrieval** (`$geoNear` on the sales `2dsphere` index) + a compound hot-query index
+  (auto-ensured on startup) — better comp geography and speed.
 
 ## Setup
 

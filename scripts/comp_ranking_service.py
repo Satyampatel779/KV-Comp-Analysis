@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import os
 import re
+import statistics
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -134,6 +136,16 @@ def safe_ratio_gap(subject_value: float | None, candidate_value: float | None) -
     return abs(candidate_value - subject_value) / abs(subject_value)
 
 
+def abs_gap(subject_value: Any, candidate_value: Any) -> float | None:
+    """Absolute numeric gap, or None when either side is missing/non-numeric."""
+    if subject_value is None or candidate_value is None:
+        return None
+    try:
+        return abs(float(candidate_value) - float(subject_value))
+    except (TypeError, ValueError):
+        return None
+
+
 def clamp_penalty(value: float, maximum: float) -> float:
     return min(value, maximum)
 
@@ -147,6 +159,131 @@ def lat_lon(coordinates: list[float] | None) -> tuple[float | None, float | None
     if not coordinates or len(coordinates) != 2:
         return None, None
     return coordinates[1], coordinates[0]
+
+
+@dataclass(frozen=True)
+class ScoringWeights:
+    """Tunable scoring knobs. Defaults reproduce the engine's original scoring.
+
+    Penalties are subtracted from ``base``; each is capped. Bonuses are added.
+    Callers (API/UI) may override any subset; unspecified knobs keep defaults.
+    """
+
+    base: float = 100.0
+    distance_per_km: float = 9.0
+    distance_cap: float = 35.0
+    distance_missing_penalty: float = 20.0
+    recency_per_month: float = 2.0
+    recency_cap: float = 22.0
+    value_gap_factor: float = 0.55
+    value_gap_cap: float = 22.0
+    land_gap_factor: float = 0.22
+    land_gap_cap: float = 12.0
+    year_gap_per_year: float = 0.6
+    year_gap_cap: float = 12.0
+    bed_gap_per: float = 3.0
+    bed_gap_cap: float = 9.0
+    bath_gap_per: float = 3.0
+    bath_gap_cap: float = 9.0
+    garage_gap_per: float = 2.0
+    garage_gap_cap: float = 6.0
+    same_community_bonus: float = 12.0
+    same_community_pass_bonus: float = 4.0
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ScoringWeights":
+        if not data:
+            return cls()
+        names = {f.name for f in dataclasses.fields(cls)}
+        clean = {k: float(v) for k, v in data.items() if k in names and v is not None}
+        return dataclasses.replace(cls(), **clean)
+
+
+DEFAULT_WEIGHTS = ScoringWeights()
+
+
+# Calgary street-type + quadrant abbreviations used in the stored addresses.
+# Used to build tolerant search regexes (full word OR its abbreviation match).
+ADDRESS_ABBREV = {
+    "STREET": "ST", "AVENUE": "AV", "AVE": "AV", "DRIVE": "DR", "ROAD": "RD",
+    "BOULEVARD": "BV", "CRESCENT": "CR", "CLOSE": "CL", "COURT": "CT", "PLACE": "PL",
+    "LANE": "LN", "WAY": "WY", "GATE": "GT", "HEIGHTS": "HT", "TERRACE": "TC",
+    "POINT": "PT", "SQUARE": "SQ", "VIEW": "VW", "GREEN": "GR", "GROVE": "GV",
+    "BAY": "BA", "MANOR": "MR", "RISE": "RI", "HILL": "HL", "COMMON": "CO",
+    "NORTHWEST": "NW", "NORTHEAST": "NE", "SOUTHWEST": "SW", "SOUTHEAST": "SE",
+}
+
+
+def address_tokens(text: str) -> list[str]:
+    """Split a query into normalized tokens (upper-cased, whitespace-collapsed)."""
+    return [t for t in normalize_whitespace(text).split(" ") if t]
+
+
+def token_regex(token: str) -> str:
+    """Word-prefix regex for one token, tolerant of full-word/abbreviation forms.
+
+    ``\\b`` anchors to a word start so e.g. ``NW`` matches the quadrant token but
+    NOT the ``nw`` inside ``LYNNWOOD``. A full street-type word also matches its
+    stored abbreviation (``DRIVE`` -> ``DR``) and vice-versa (``DR`` prefix
+    matches ``DRIVE``).
+    """
+    esc = re.escape(token)
+    abbr = ADDRESS_ABBREV.get(token)
+    if abbr:
+        return rf"\b({esc}|{re.escape(abbr)})"
+    return rf"\b{esc}"
+
+
+def summarize_value(comparables: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute an implied value band + a heuristic confidence over a comp set.
+
+    Pure function (no DB / clock): driven entirely by the comp dicts passed in,
+    so the UI can recompute it after a user excludes individual comps.
+    """
+    prices = [c["sale_price"] for c in comparables if isinstance(c.get("sale_price"), (int, float))]
+    n = len(prices)
+    if n == 0:
+        return {
+            "count": 0, "median_price": None, "min_price": None, "max_price": None,
+            "price_per_sqm_median": None, "time_adjusted_median": None,
+            "confidence": {"score": 0, "level": "none", "factors": ["no comparable sales"]},
+        }
+
+    mean = sum(prices) / n
+    stdev = statistics.pstdev(prices) if n > 1 else 0.0
+    cv = (stdev / mean) if mean else 0.0
+    ppsqm = [c["price_per_sqm"] for c in comparables if isinstance(c.get("price_per_sqm"), (int, float))]
+    taj = [c["time_adjusted_price"] for c in comparables if isinstance(c.get("time_adjusted_price"), (int, float))]
+    recencies = [c["recency_days"] for c in comparables if isinstance(c.get("recency_days"), (int, float))]
+    median_recency = statistics.median(recencies) if recencies else None
+
+    score = 100.0
+    factors: list[str] = []
+    if n < 3:
+        score -= 45; factors.append(f"only {n} comp(s)")
+    elif n < 6:
+        score -= 20; factors.append(f"{n} comps")
+    if cv > 0.25:
+        score -= 30; factors.append(f"wide price spread ({cv * 100:.0f}% CV)")
+    elif cv > 0.15:
+        score -= 15; factors.append(f"moderate spread ({cv * 100:.0f}% CV)")
+    if median_recency is not None and median_recency > 365:
+        score -= 20; factors.append("stale sales (>1yr median)")
+    elif median_recency is not None and median_recency > 270:
+        score -= 10; factors.append("aging sales")
+    score = max(0, round(score))
+    level = "high" if score >= 75 else "medium" if score >= 50 else "low"
+
+    return {
+        "count": n,
+        "median_price": round(statistics.median(prices)),
+        "min_price": round(min(prices)),
+        "max_price": round(max(prices)),
+        "price_per_sqm_median": round(statistics.median(ppsqm), 2) if ppsqm else None,
+        "time_adjusted_median": round(statistics.median(taj)) if taj else None,
+        "median_recency_days": int(median_recency) if median_recency is not None else None,
+        "confidence": {"score": score, "level": level, "factors": factors or ["solid comp set"]},
+    }
 
 
 class CompRankingService:
@@ -220,7 +357,19 @@ class CompRankingService:
                 projection,
             ).limit(limit)
         )
-        # 2) normalized "contains" address match
+        # 2) tolerant token match — every token must appear as a word-prefix
+        #    (order-independent, abbreviation-aware typeahead). Avoids the
+        #    "NW matches LYNNWOOD" substring false-positive via word anchoring.
+        tokens = address_tokens(query_text)
+        if len(ordered) < limit and tokens:
+            token_query = {
+                "$and": [
+                    {"address.full": {"$regex": token_regex(tok), "$options": "i"}}
+                    for tok in tokens
+                ]
+            }
+            add(self.db.properties.find(token_query, projection).limit(limit * 4))
+        # 3) normalized "contains" address match (last-resort substring)
         if len(ordered) < limit:
             add(
                 self.db.properties.find(
@@ -228,11 +377,27 @@ class CompRankingService:
                     projection,
                 ).limit(limit * 3)
             )
-        # 3) exact property_id match
+        # 4) exact property_id match
         if len(ordered) < limit:
             add(self.db.properties.find({"property_id": query_text}, projection).limit(limit))
 
         return ordered[:limit]
+
+    def ensure_indexes(self) -> None:
+        """Best-effort: create the indexes the hot paths rely on (idempotent).
+
+        ``sales.location`` 2dsphere powers geo-aware retrieval; the compound
+        index supports the non-geo filter pass. Safe to call on every startup.
+        """
+        try:
+            self.db.sales.create_index([("location", "2dsphere")], name="location_2dsphere")
+            self.db.sales.create_index(
+                [("city", 1), ("property_snapshot.property_type_normalized", 1), ("sale_date", -1)],
+                name="comp_hot",
+            )
+            self.db.properties.create_index([("location", "2dsphere")], name="location_2dsphere")
+        except Exception:  # noqa: BLE001 - index creation must never break startup
+            pass
 
     @staticmethod
     def _subject_summary(subject: dict[str, Any]) -> dict[str, Any]:
@@ -263,7 +428,11 @@ class CompRankingService:
         same_community_only: bool = False,
         max_distance_km: float | None = None,
         max_sale_age_days: int | None = None,
+        weights: ScoringWeights | None = None,
+        annual_appreciation_rate: float = 0.0,
+        use_geo: bool = True,
     ) -> dict[str, Any]:
+        weights = weights or DEFAULT_WEIGHTS
         subject_property = subject.get("property") or {}
         subject_assessment = subject.get("assessment") or {}
         subject_community = subject.get("community") or {}
@@ -272,6 +441,9 @@ class CompRankingService:
         subject_year_built = subject_property.get("year_built")
         subject_land_size = subject_property.get("land_size_sqm")
         subject_type = subject_property.get("property_type_normalized")
+        subject_bedrooms = subject_property.get("bedrooms")
+        subject_bathrooms = subject_property.get("bathrooms")
+        subject_garage = subject_property.get("garage_count")
 
         if not subject_type or not subject_assessed_value:
             raise ValueError("Subject property is missing property_type_normalized or assessed_value.")
@@ -309,12 +481,9 @@ class CompRankingService:
                 if query_pass.same_community_only and subject_community.get("code"):
                     query["community.code"] = subject_community.get("code")
 
-                sales_cursor = (
-                    self.db.sales.find(query, {"_id": 0})
-                    .sort("sale_date", -1)
-                    .limit(max_results_per_pass)
-                )
-                for sale in sales_cursor:
+                for sale in self._iter_candidates(
+                    query, profile, subject_location, max_results_per_pass, use_geo
+                ):
                     sale_id = sale.get("sale_id")
                     if not sale_id or sale_id in seen_sale_ids:
                         continue
@@ -325,10 +494,15 @@ class CompRankingService:
                         subject_assessed_value=subject_assessed_value,
                         subject_year_built=subject_year_built,
                         subject_land_size=subject_land_size,
+                        subject_bedrooms=subject_bedrooms,
+                        subject_bathrooms=subject_bathrooms,
+                        subject_garage=subject_garage,
                         subject_community=subject_community,
                         sale=sale,
                         profile=profile,
                         query_pass=query_pass,
+                        weights=weights,
+                        annual_appreciation_rate=annual_appreciation_rate,
                     )
                     if ranked is None:
                         continue
@@ -342,7 +516,8 @@ class CompRankingService:
                 break
 
         ranked_candidates.sort(key=lambda item: item["score"], reverse=True)
-        self._attach_property_addresses(ranked_candidates[:limit])
+        top = ranked_candidates[:limit]
+        self._attach_property_addresses(top)
         subject_lat, subject_lon = lat_lon(subject_location)
         return {
             "subject": {
@@ -354,20 +529,64 @@ class CompRankingService:
                 "assessed_value": subject_assessed_value,
                 "year_built": subject_year_built,
                 "land_size_sqm": subject_land_size,
+                "bedrooms": subject_bedrooms,
+                "bathrooms": subject_bathrooms,
+                "garage_count": subject_garage,
                 "latitude": subject_lat,
                 "longitude": subject_lon,
             },
             "candidate_count": len(ranked_candidates),
-            "returned_count": min(limit, len(ranked_candidates)),
+            "returned_count": len(top),
             "applied_filters": {
                 "limit": limit,
                 "same_community_only": same_community_only,
                 "max_distance_km": max_distance_km,
                 "max_sale_age_days": max_sale_age_days,
                 "max_results_per_pass": max_results_per_pass,
+                "annual_appreciation_rate": annual_appreciation_rate,
+                "geo_retrieval": bool(use_geo and subject_location),
             },
-            "comparables": ranked_candidates[:limit],
+            "analysis": summarize_value(top),
+            "comparables": top,
         }
+
+    def _iter_candidates(
+        self,
+        query: dict[str, Any],
+        profile: FilterProfile,
+        subject_location: list[float] | None,
+        max_results_per_pass: int,
+        use_geo: bool,
+    ) -> list[dict[str, Any]]:
+        """Fetch candidate sales for one filter pass.
+
+        When the subject has coordinates and ``use_geo`` is set, use ``$geoNear``
+        (nearest-first within the profile's max distance) over the sales 2dsphere
+        index — better comp geography than recency-sorted scanning. Falls back to
+        a recency-sorted ``find`` on any error (e.g. a missing geo index).
+        """
+        if use_geo and subject_location and len(subject_location) == 2:
+            pipeline = [
+                {
+                    "$geoNear": {
+                        "near": {"type": "Point", "coordinates": subject_location},
+                        "distanceField": "_dist_m",
+                        "spherical": True,
+                        "maxDistance": profile.max_distance_km * 1000.0,
+                        "key": "location",
+                        "query": query,
+                    }
+                },
+                {"$limit": max_results_per_pass},
+                {"$project": {"_id": 0}},
+            ]
+            try:
+                return list(self.db.sales.aggregate(pipeline))
+            except Exception:  # noqa: BLE001 - fall back to non-geo retrieval
+                pass
+        return list(
+            self.db.sales.find(query, {"_id": 0}).sort("sale_date", -1).limit(max_results_per_pass)
+        )
 
     @staticmethod
     def _apply_overrides(
@@ -428,11 +647,17 @@ class CompRankingService:
         subject_assessed_value: float,
         subject_year_built: int | None,
         subject_land_size: float | None,
+        subject_bedrooms: float | None,
+        subject_bathrooms: float | None,
+        subject_garage: float | None,
         subject_community: dict[str, Any],
         sale: dict[str, Any],
         profile: FilterProfile,
         query_pass: QueryPass,
+        weights: ScoringWeights,
+        annual_appreciation_rate: float = 0.0,
     ) -> dict[str, Any] | None:
+        w = weights
         snapshot = sale.get("property_snapshot") or {}
         candidate_location = (sale.get("location") or {}).get("coordinates")
         candidate_lat, candidate_lon = lat_lon(candidate_location)
@@ -463,28 +688,45 @@ class CompRankingService:
 
         recency_days = max(0, (datetime.now(UTC) - sale_datetime).days)
 
-        score = 100.0
+        # Optional structural gaps — only scored when the subject supplies them
+        # (DB subjects have no bed/bath; manual/off-market subjects may).
+        bed_gap = abs_gap(subject_bedrooms, snapshot.get("bedrooms"))
+        bath_gap = abs_gap(subject_bathrooms, snapshot.get("bathrooms"))
+        garage_gap = abs_gap(subject_garage, snapshot.get("garage_count"))
+
+        score = w.base
         if distance_km is not None:
-            score -= clamp_penalty(distance_km * 9.0, 35.0)
+            score -= clamp_penalty(distance_km * w.distance_per_km, w.distance_cap)
         else:
-            score -= 20.0
-
-        score -= clamp_penalty(recency_days / 30.0 * 2.0, 22.0)
-        score -= clamp_penalty(assessed_gap_ratio * 100.0 * 0.55, 22.0)
-
+            score -= w.distance_missing_penalty
+        score -= clamp_penalty(recency_days / 30.0 * w.recency_per_month, w.recency_cap)
+        score -= clamp_penalty(assessed_gap_ratio * 100.0 * w.value_gap_factor, w.value_gap_cap)
         if land_gap_ratio is not None:
-            score -= clamp_penalty(land_gap_ratio * 100.0 * 0.22, 12.0)
+            score -= clamp_penalty(land_gap_ratio * 100.0 * w.land_gap_factor, w.land_gap_cap)
         if year_gap is not None:
-            score -= clamp_penalty(year_gap * 0.6, 12.0)
+            score -= clamp_penalty(year_gap * w.year_gap_per_year, w.year_gap_cap)
+        if bed_gap is not None:
+            score -= clamp_penalty(bed_gap * w.bed_gap_per, w.bed_gap_cap)
+        if bath_gap is not None:
+            score -= clamp_penalty(bath_gap * w.bath_gap_per, w.bath_gap_cap)
+        if garage_gap is not None:
+            score -= clamp_penalty(garage_gap * w.garage_gap_per, w.garage_gap_cap)
 
         same_community = (sale.get("community") or {}).get("code") == subject_community.get("code")
         if same_community:
-            score += 12.0
-
+            score += w.same_community_bonus
         if query_pass.same_community_only:
-            score += 4.0
+            score += w.same_community_pass_bonus
 
         score = max(0.0, round(score, 2))
+
+        sale_price = sale.get("sale_price")
+        land = snapshot.get("land_size_sqm")
+        price_per_sqm = round(sale_price / land, 2) if sale_price and land else None
+        rate = annual_appreciation_rate or 0.0
+        time_adjusted_price = (
+            round(sale_price * ((1.0 + rate) ** (recency_days / 365.0))) if sale_price else None
+        )
 
         reasons = []
         if distance_km is not None:
@@ -495,6 +737,10 @@ class CompRankingService:
             reasons.append("same community")
         if year_gap is not None:
             reasons.append(f"year built gap {year_gap}")
+        if bed_gap:
+            reasons.append(f"{bed_gap:g} bd diff")
+        if bath_gap:
+            reasons.append(f"{bath_gap:g} ba diff")
 
         return {
             "sale_id": sale.get("sale_id"),
@@ -502,7 +748,9 @@ class CompRankingService:
             "address": snapshot.get("address"),
             "community": (sale.get("community") or {}).get("name"),
             "sale_date": sale.get("sale_date"),
-            "sale_price": sale.get("sale_price"),
+            "sale_price": sale_price,
+            "time_adjusted_price": time_adjusted_price,
+            "price_per_sqm": price_per_sqm,
             "score": score,
             "distance_km": round(distance_km, 3) if distance_km is not None else None,
             "recency_days": recency_days,
@@ -511,6 +759,11 @@ class CompRankingService:
             "assessed_value_gap_ratio": round(assessed_gap_ratio, 4),
             "land_size_gap_ratio": round(land_gap_ratio, 4) if land_gap_ratio is not None else None,
             "year_built_gap": year_gap,
+            "bedrooms": snapshot.get("bedrooms"),
+            "bathrooms": snapshot.get("bathrooms"),
+            "garage_count": snapshot.get("garage_count"),
+            "bedrooms_gap": bed_gap,
+            "bathrooms_gap": bath_gap,
             "matched_profile": profile.label,
             "matched_query_pass": query_pass.label,
             "reasons": reasons,

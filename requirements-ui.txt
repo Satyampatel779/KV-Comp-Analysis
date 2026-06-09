@@ -1,6 +1,9 @@
 # Streamlit demo UI deps (HTTP client of the FastAPI service).
-# streamlit pulls pandas/pyarrow transitively; pinned here for clarity.
+# streamlit pulls pandas/altair/pydeck transitively; pinned here for clarity.
 streamlit>=1.40
 pandas>=2.2
+pydeck>=0.9
+altair>=5.0
+fpdf2>=2.7
 httpx>=0.28
 python-dotenv>=1.2
