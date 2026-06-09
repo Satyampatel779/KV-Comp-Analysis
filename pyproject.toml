@@ -1,0 +1,13 @@
+[project]
+name = "kv-comp-analysis"
+version = "1.1.0"
+description = "Calgary residential comp-analysis assistant: ranked comparable sales + grounded LLM explanation for KV Capital underwriting."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

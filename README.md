@@ -19,7 +19,29 @@ Streamlit UI  ──HTTP──▶  FastAPI  ──▶  CompRankingService  ─�
   **property imagery** (aerial + Google Maps/Street View links) + **CSV export** + an
   **Ask-the-assistant** chat. A thin HTTP client of the API (does no ranking itself).
 - **Data** — Atlas MVP dataset: 120,313 properties, 69,582 synthetic sales. (Large NDJSON/GeoJSON
-  in `data/` is gitignored.)
+  in `data/` is gitignored — see [`data/README.md`](data/README.md).)
+
+## Project structure
+
+```
+kv-comp-analysis/
+├── scripts/                 # runtime service
+│   ├── api_main.py          #   FastAPI app (/health /subject-search /rank-comps /ask /ask/stream)
+│   ├── api_models.py        #   Pydantic request/response models
+│   ├── api_config.py        #   env-based settings
+│   ├── comp_ranking_service.py  # the comp engine (retrieval + scoring) — also a CLI
+│   ├── llm_service.py       #   grounded Groq LLM client (Q&A + memo, streaming)
+│   └── smoke_test.py        #   live end-to-end API check
+├── app/
+│   └── streamlit_app.py     # demo UI (HTTP client of the API)
+├── pipeline/                # one-off ETL that built the dataset (see data/README.md)
+├── tests/                   # DB/network-free unit tests (pytest)
+├── data/                    # gitignored datasets (documented in data/README.md)
+├── Dockerfile.api · Dockerfile.ui · docker-compose.yml
+├── requirements*.txt · pyproject.toml
+└── README.md · README_API.md · LOOM_SCRIPT.md
+```
+
 
 ## Quality-of-life features
 
@@ -153,3 +175,8 @@ is a small change if desired.
 - Tuning flags only ever *tighten* the engine's built-in profiles — callers can't widen past its ceilings.
 - Auth is off by default; set `API_KEY` to require an `x-api-key` header on every request.
 - See [`LOOM_SCRIPT.md`](LOOM_SCRIPT.md) for the < 10-min walkthrough outline.
+
+## License / IP
+
+Built for the KV Capital AI-Engineer hackathon. Per the challenge terms, KV Capital owns the IP of
+this submission. Synthetic/anonymized data only — no proprietary or personal records.
