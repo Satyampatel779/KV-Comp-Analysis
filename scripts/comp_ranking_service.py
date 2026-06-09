@@ -197,6 +197,7 @@ class CompRankingService:
             "community": 1,
             "property": 1,
             "assessment": 1,
+            "location": 1,
         }
 
         ordered: list[dict[str, Any]] = []
@@ -238,6 +239,7 @@ class CompRankingService:
         subject_property = subject.get("property") or {}
         subject_assessment = subject.get("assessment") or {}
         subject_community = subject.get("community") or {}
+        subject_lat, subject_lon = lat_lon((subject.get("location") or {}).get("coordinates"))
         return {
             "property_id": subject.get("property_id"),
             "address": (subject.get("address") or {}).get("full"),
@@ -248,6 +250,8 @@ class CompRankingService:
             "assessed_value": subject_assessment.get("assessed_value"),
             "year_built": subject_property.get("year_built"),
             "land_size_sqm": subject_property.get("land_size_sqm"),
+            "latitude": subject_lat,
+            "longitude": subject_lon,
         }
 
     def find_ranked_comps(

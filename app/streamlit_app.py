@@ -12,6 +12,7 @@ Config (env or .env): API_BASE_URL (default http://localhost:8000), API_KEY (opt
 
 from __future__ import annotations
 
+import math
 import os
 from statistics import median
 from typing import Any
@@ -29,8 +30,10 @@ except ImportError:
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000").rstrip("/")
 API_KEY = os.environ.get("API_KEY") or None
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY") or None
 HEADERS = {"x-api-key": API_KEY} if API_KEY else {}
 TIMEOUT = httpx.Timeout(30.0)
+LLM_TIMEOUT = httpx.Timeout(90.0)  # LLM calls can take several seconds
 
 st.set_page_config(page_title="KV Comp Analysis", page_icon="🏠", layout="wide")
 
@@ -52,12 +55,12 @@ def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return resp.json()
 
 
-def check_health() -> tuple[bool, str]:
+def check_health() -> tuple[bool, str, bool]:
     try:
         body = _get("/health", {})
-        return bool(body.get("mongo_connected")), body.get("db", "?")
+        return bool(body.get("mongo_connected")), body.get("db", "?"), bool(body.get("llm_configured"))
     except Exception as exc:  # noqa: BLE001 - surface any connectivity issue in the badge
-        return False, str(exc)
+        return False, str(exc), False
 
 
 def search_subjects(query: str, limit: int) -> list[dict[str, Any]]:
@@ -68,6 +71,13 @@ def rank_comps(payload: dict[str, Any]) -> dict[str, Any]:
     return _post("/rank-comps", payload)
 
 
+def ask_llm(payload: dict[str, Any]) -> dict[str, Any]:
+    with httpx.Client(timeout=LLM_TIMEOUT, headers=HEADERS) as client:
+        resp = client.post(f"{API_BASE_URL}/ask", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+
 def fmt_money(value: Any) -> str:
     try:
         return f"${float(value):,.0f}"
@@ -76,14 +86,52 @@ def fmt_money(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Imagery helpers — no-key by default (aerial + clickable links); Street View
+# Static photo only if GOOGLE_MAPS_API_KEY is set.
+# --------------------------------------------------------------------------- #
+def google_maps_link(lat: float, lon: float) -> str:
+    return f"https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+
+
+def street_view_link(lat: float, lon: float) -> str:
+    return f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={lat},{lon}"
+
+
+def aerial_image_url(lat: float, lon: float, meters: float = 130.0, size: int = 500) -> str:
+    """Esri World Imagery static export (no API key). Square bbox in meters."""
+    dlat = meters / 111_320.0
+    dlon = meters / (111_320.0 * max(0.1, math.cos(math.radians(lat))))
+    minx, miny, maxx, maxy = lon - dlon, lat - dlat, lon + dlon, lat + dlat
+    return (
+        "https://services.arcgisonline.com/arcgis/rest/services/World_Imagery/"
+        f"MapServer/export?bbox={minx},{miny},{maxx},{maxy}"
+        f"&bboxSR=4326&imageSR=3857&size={size},{size}&format=jpg&f=image"
+    )
+
+
+def street_view_static_url(lat: float, lon: float, size: str = "600x300") -> str | None:
+    if not GOOGLE_MAPS_API_KEY:
+        return None
+    return (
+        f"https://maps.googleapis.com/maps/api/streetview?size={size}"
+        f"&location={lat},{lon}&fov=80&key={GOOGLE_MAPS_API_KEY}"
+    )
+
+
+def has_coords(obj: dict[str, Any]) -> bool:
+    return obj.get("latitude") is not None and obj.get("longitude") is not None
+
+
+# --------------------------------------------------------------------------- #
 # Sidebar: connection + tuning controls
 # --------------------------------------------------------------------------- #
 st.sidebar.title("KV Comp Analysis")
 st.sidebar.caption(f"API: `{API_BASE_URL}`")
 
-healthy, db_or_err = check_health()
+healthy, db_or_err, llm_ready = check_health()
 if healthy:
     st.sidebar.success(f"API connected · db `{db_or_err}`")
+    st.sidebar.caption(f"LLM assistant: {'✅ ready' if llm_ready else '⚠️ not configured'}")
 else:
     st.sidebar.error("API unreachable")
     st.sidebar.caption(db_or_err)
@@ -171,6 +219,22 @@ if subject:
         f"{subject.get('city') or '—'} · `{subject.get('property_id')}`"
     )
 
+    if has_coords(subject):
+        s_lat, s_lon = subject["latitude"], subject["longitude"]
+        img_l, img_r = st.columns(2)
+        img_l.image(aerial_image_url(s_lat, s_lon), caption="Aerial view", use_container_width=True)
+        sv_url = street_view_static_url(s_lat, s_lon)
+        if sv_url:
+            img_r.image(sv_url, caption="Street View", use_container_width=True)
+        else:
+            img_r.caption("Add GOOGLE_MAPS_API_KEY to show an inline Street View photo.")
+        st.markdown(
+            f"[📍 Open in Google Maps]({google_maps_link(s_lat, s_lon)}) · "
+            f"[🏠 Street View]({street_view_link(s_lat, s_lon)})"
+        )
+    else:
+        st.caption("No coordinates available for this property — imagery unavailable.")
+
     if st.button("🔍 Find comparable sales", type="primary"):
         payload: dict[str, Any] = {
             "subject_property_id": subject.get("property_id"),
@@ -233,15 +297,36 @@ if result and result.get("subject", {}).get("property_id") == (subject or {}).ge
             "assessed_value_gap_ratio",
             "year_built_gap",
             "matched_profile",
+            "map",
+            "street_view",
             "reasons",
         ]
         df = pd.DataFrame(comps)
+        if {"latitude", "longitude"}.issubset(df.columns):
+            coord_ok = df["latitude"].notna() & df["longitude"].notna()
+            df["map"] = None
+            df["street_view"] = None
+            df.loc[coord_ok, "map"] = df[coord_ok].apply(
+                lambda r: google_maps_link(r["latitude"], r["longitude"]), axis=1
+            )
+            df.loc[coord_ok, "street_view"] = df[coord_ok].apply(
+                lambda r: street_view_link(r["latitude"], r["longitude"]), axis=1
+            )
         df_display = df[[c for c in table_cols if c in df.columns]].copy()
         if "reasons" in df_display.columns:
             df_display["reasons"] = df_display["reasons"].apply(
                 lambda r: ", ".join(r) if isinstance(r, list) else r
             )
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "sale_price": st.column_config.NumberColumn("Sale price", format="$%d"),
+                "map": st.column_config.LinkColumn("Map", display_text="📍"),
+                "street_view": st.column_config.LinkColumn("Street View", display_text="🏠"),
+            },
+        )
 
         # Map: subject (one point) + comps. st.map wants latitude/longitude columns.
         map_rows: list[dict[str, Any]] = []
@@ -272,3 +357,72 @@ if result and result.get("subject", {}).get("property_id") == (subject or {}).ge
 
         with st.expander("Raw API response (JSON)"):
             st.json(result)
+
+    # ----------------------------------------------------------------- #
+    # LLM assistant: grounded Q&A + comp memo (calls POST /ask)
+    # ----------------------------------------------------------------- #
+    st.divider()
+    st.subheader("🤖 Ask the assistant")
+
+    subject_id = subject.get("property_id")
+    if st.session_state.get("chat_subject") != subject_id:
+        st.session_state.chat = []
+        st.session_state.chat_subject = subject_id
+
+    if not llm_ready:
+        st.info(
+            "LLM assistant isn't configured. Set GROQ_API_KEY in the API "
+            "environment to enable grounded Q&A about this property."
+        )
+    else:
+        def run_ask(question: str | None = None, mode: str = "qa") -> None:
+            payload: dict[str, Any] = {
+                "subject_property_id": subject_id,
+                "mode": mode,
+                "limit": int(limit),
+                "same_community_only": bool(same_community_only),
+            }
+            if mode == "qa":
+                payload["question"] = question
+            if max_distance_km is not None:
+                payload["max_distance_km"] = float(max_distance_km)
+            if max_sale_age_days is not None:
+                payload["max_sale_age_days"] = int(max_sale_age_days)
+            label = question if mode == "qa" else "📝 Generate comp memo"
+            try:
+                with st.spinner("Thinking…"):
+                    resp = ask_llm(payload)
+                st.session_state.chat.append(("user", label))
+                st.session_state.chat.append(("assistant", resp.get("answer", "")))
+            except httpx.HTTPStatusError as exc:
+                try:
+                    detail = exc.response.json().get("detail", "")
+                except Exception:  # noqa: BLE001
+                    detail = exc.response.text
+                st.session_state.chat.append(
+                    ("assistant", f"⚠️ Error {exc.response.status_code}: {detail}")
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.session_state.chat.append(("assistant", f"⚠️ Error: {exc}"))
+
+        for role, msg in st.session_state.get("chat", []):
+            with st.chat_message(role):
+                st.markdown(msg)
+
+        suggestions = [
+            "What is a fair offer range for the subject?",
+            "Why is the top comp ranked first?",
+            "Which comps are the weakest, and why?",
+        ]
+        cols = st.columns(len(suggestions) + 1)
+        for i, sug in enumerate(suggestions):
+            if cols[i].button(sug, key=f"sug_{i}", use_container_width=True):
+                run_ask(question=sug, mode="qa")
+                st.rerun()
+        if cols[-1].button("📝 Comp memo", key="memo_btn", use_container_width=True):
+            run_ask(mode="summary")
+            st.rerun()
+
+        if prompt := st.chat_input("Ask about this property…"):
+            run_ask(question=prompt, mode="qa")
+            st.rerun()

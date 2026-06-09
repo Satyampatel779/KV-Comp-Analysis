@@ -26,6 +26,10 @@ class Settings:
     api_host: str
     api_port: int
     api_key: str | None
+    groq_api_key: str | None
+    groq_model: str
+    groq_base_url: str
+    google_maps_api_key: str | None
 
 
 @lru_cache(maxsize=1)
@@ -43,4 +47,8 @@ def get_settings() -> Settings:
         api_host=os.environ.get("API_HOST", "0.0.0.0"),
         api_port=int(os.environ.get("API_PORT", "8000")),
         api_key=os.environ.get("API_KEY") or None,
+        groq_api_key=os.environ.get("GROQ_API_KEY") or None,
+        groq_model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        groq_base_url=os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+        google_maps_api_key=os.environ.get("GOOGLE_MAPS_API_KEY") or None,
     )

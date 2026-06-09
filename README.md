@@ -11,12 +11,24 @@ Streamlit UI  ──HTTP──▶  FastAPI  ──▶  CompRankingService  ─�
 - **Engine** (`scripts/comp_ranking_service.py`) — multi-pass retrieval (same-community → same-city)
   across tight/balanced/wide filter profiles, then deterministic scoring (distance, recency,
   assessed-value / land / year gaps, same-community bonus). Reused by both the CLI and the API.
-- **API** (`scripts/api_main.py`) — `GET /health`, `GET /subject-search`, `POST /rank-comps`.
-  See [`README_API.md`](README_API.md) for the endpoint contract.
-- **UI** (`app/streamlit_app.py`) — subject search → ranked table + map + implied value band + CSV export.
-  A thin HTTP client of the API (does no ranking itself).
+- **API** (`scripts/api_main.py`) — `GET /health`, `GET /subject-search`, `POST /rank-comps`,
+  `POST /ask` (grounded LLM Q&A / comp memo). See [`README_API.md`](README_API.md) for the contract.
+- **LLM assistant** (`scripts/llm_service.py`) — Groq (OpenAI-compatible) grounded **only** on the
+  subject + its ranked comps; answers value questions as ranges with caveats. Key stays server-side.
+- **UI** (`app/streamlit_app.py`) — subject search → ranked table + map + implied value band +
+  **property imagery** (aerial + Google Maps/Street View links) + **CSV export** + an
+  **Ask-the-assistant** chat. A thin HTTP client of the API (does no ranking itself).
 - **Data** — Atlas MVP dataset: 120,313 properties, 69,582 synthetic sales. (Large NDJSON/GeoJSON
   in `data/` is gitignored.)
+
+## Quality-of-life features
+
+- 🤖 **LLM property Q&A** — ask "what's a fair offer range?", "why is comp #1 ranked first?";
+  one-click **comp memo** for underwriting. Grounded on the live ranked comps via `POST /ask`.
+- 🛰️ **Property imagery** — no-key aerial (Esri World Imagery) + clickable Google Maps / Street View
+  links for the subject and every comp. Set `GOOGLE_MAPS_API_KEY` to also render inline Street View photos.
+- 💲 **Implied value band** (median + min/max of comp prices) and a clickable comps table.
+- ⬇️ **CSV export** of the shortlist for handoff.
 
 ## Setup
 

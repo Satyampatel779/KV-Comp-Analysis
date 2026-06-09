@@ -14,15 +14,16 @@ ranking logic over HTTP so a frontend, CLI, or any HTTP client can call it relia
 
 | Method | Path              | Purpose                                              |
 |--------|-------------------|------------------------------------------------------|
-| GET    | `/health`         | Service status + Mongo connectivity.                 |
+| GET    | `/health`         | Service status + Mongo connectivity + LLM readiness. |
 | GET    | `/subject-search` | Resolve a subject by address/property_id.            |
 | POST   | `/rank-comps`     | Ranked comparable-sales shortlist for a subject.     |
+| POST   | `/ask`            | Grounded LLM Q&A / comp memo for a subject.          |
 
 Interactive docs once running: `http://localhost:8000/docs`.
 
 ### `GET /health`
 ```json
-{ "status": "ok", "db": "kv_comp_analysis", "mongo_connected": true }
+{ "status": "ok", "db": "kv_comp_analysis", "mongo_connected": true, "llm_configured": true }
 ```
 
 ### `GET /subject-search?q=<address-or-id>&limit=10`
@@ -106,6 +107,28 @@ Response (truncated):
 
 Errors: `400` (both/neither subject provided), `404` (subject not found), `422` (subject
 missing required fields like `assessed_value`).
+
+### `POST /ask`
+Grounded LLM Q&A (Groq, OpenAI-compatible) over the subject + its ranked comps. The model is
+instructed to use **only** the provided data and to frame value opinions as ranges with caveats.
+Requires `GROQ_API_KEY` (returns `503` if unset). Provide **exactly one** subject. `question` is
+required when `mode="qa"`; `mode="summary"` writes a short underwriting comp memo.
+
+Request:
+```json
+{ "subject_property_id": "PROP-123", "question": "What is a fair offer range?", "mode": "qa", "limit": 8 }
+```
+Response:
+```json
+{
+  "answer": "Based on 159 LYNNWOOD DR SE ($581,000)…, a fair range is $535,000–$575,000. (Automated estimate, not an appraisal.)",
+  "model": "llama-3.3-70b-versatile",
+  "mode": "qa",
+  "used_comps": 8,
+  "subject": { "property_id": "PROP-123", "address": "…", "latitude": 50.98, "longitude": -114.0 }
+}
+```
+Errors: `503` (LLM not configured), `502` (upstream LLM error), `404`/`400`/`422` as for `/rank-comps`.
 
 ---
 

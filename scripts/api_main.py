@@ -15,12 +15,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api_config import Settings, get_settings
 from api_models import (
+    AskRequest,
+    AskResponse,
     HealthResponse,
     RankCompsRequest,
     RankCompsResponse,
     SubjectSearchResponse,
 )
 from comp_ranking_service import CompRankingService
+from llm_service import LLMService, LLMUnavailable
 
 app = FastAPI(
     title="KV Comp Analysis API",
@@ -39,6 +42,7 @@ app.add_middleware(
 # Lazily-built singletons. MongoClient is thread-safe and connection-pooled,
 # so one service instance is reused across all requests.
 _service: CompRankingService | None = None
+_llm: LLMService | None = None
 
 
 def get_service() -> CompRankingService:
@@ -47,6 +51,18 @@ def get_service() -> CompRankingService:
         settings = get_settings()
         _service = CompRankingService(uri=settings.mongodb_uri, db_name=settings.mongodb_db)
     return _service
+
+
+def get_llm() -> LLMService:
+    global _llm
+    if _llm is None:
+        settings = get_settings()
+        _llm = LLMService(
+            api_key=settings.groq_api_key,
+            model=settings.groq_model,
+            base_url=settings.groq_base_url,
+        )
+    return _llm
 
 
 def require_api_key(
@@ -72,6 +88,7 @@ def health() -> HealthResponse:
         status="ok" if connected else "degraded",
         db=settings.mongodb_db,
         mongo_connected=connected,
+        llm_configured=bool(settings.groq_api_key),
     )
 
 
@@ -121,3 +138,55 @@ def rank_comps(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return RankCompsResponse(**result)
+
+
+@app.post(
+    "/ask",
+    response_model=AskResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def ask(
+    payload: AskRequest,
+    service: CompRankingService = Depends(get_service),
+    llm: LLMService = Depends(get_llm),
+) -> AskResponse:
+    """Grounded LLM Q&A (or comp summary) for a subject and its ranked comps."""
+    if not llm.configured:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM is not configured. Set GROQ_API_KEY (and optionally GROQ_MODEL).",
+        )
+
+    try:
+        subject = service.get_subject_property(
+            property_id=payload.subject_property_id,
+            address=payload.subject_address,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        result = service.find_ranked_comps(
+            subject=subject,
+            limit=payload.limit,
+            max_results_per_pass=250,
+            same_community_only=payload.same_community_only,
+            max_distance_km=payload.max_distance_km,
+            max_sale_age_days=payload.max_sale_age_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        answer = llm.ask(
+            subject=result["subject"],
+            comparables=result["comparables"],
+            question=payload.question,
+            mode=payload.mode,
+        )
+    except LLMUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return AskResponse(subject=result["subject"], **answer)

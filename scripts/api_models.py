@@ -8,7 +8,7 @@ easy for clients to parse. ``extra="allow"`` keeps any additional engine fields
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -46,6 +46,37 @@ class RankCompsRequest(BaseModel):
         return self
 
 
+class AskRequest(BaseModel):
+    """Grounded LLM Q&A / summary over a subject and its ranked comps."""
+
+    subject_property_id: str | None = Field(
+        default=None, description="Subject property_id (provide this OR subject_address)."
+    )
+    subject_address: str | None = Field(
+        default=None, description="Exact subject address (provide this OR subject_property_id)."
+    )
+    question: str | None = Field(
+        default=None, description="Question to answer (required when mode='qa')."
+    )
+    mode: Literal["qa", "summary"] = Field(
+        default="qa", description="'qa' answers a question; 'summary' writes a comp memo."
+    )
+    limit: int = Field(default=10, ge=1, le=50, description="Comps to ground the answer on.")
+    same_community_only: bool = Field(default=False)
+    max_distance_km: float | None = Field(default=None, gt=0)
+    max_sale_age_days: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "AskRequest":
+        if bool(self.subject_property_id) == bool(self.subject_address):
+            raise ValueError(
+                "Provide exactly one of subject_property_id or subject_address."
+            )
+        if self.mode == "qa" and not (self.question and self.question.strip()):
+            raise ValueError("question is required when mode='qa'.")
+        return self
+
+
 # --------------------------------------------------------------------------- #
 # Responses
 # --------------------------------------------------------------------------- #
@@ -53,6 +84,7 @@ class HealthResponse(BaseModel):
     status: str
     db: str
     mongo_connected: bool
+    llm_configured: bool = False
 
 
 class SubjectSummary(BaseModel):
@@ -66,6 +98,8 @@ class SubjectSummary(BaseModel):
     assessed_value: float | None = None
     year_built: int | None = None
     land_size_sqm: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class SubjectSearchResponse(BaseModel):
@@ -99,3 +133,11 @@ class RankCompsResponse(BaseModel):
     returned_count: int
     applied_filters: dict[str, Any]
     comparables: list[Comparable]
+
+
+class AskResponse(BaseModel):
+    answer: str
+    model: str
+    mode: str
+    used_comps: int
+    subject: dict[str, Any]
