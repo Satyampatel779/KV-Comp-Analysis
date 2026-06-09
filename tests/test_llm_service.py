@@ -66,6 +66,18 @@ def test_build_messages_summary_mode_ignores_question():
     assert SUMMARY_INSTRUCTION in msgs[1]["content"]
 
 
+def test_messages_enforce_data_grounding():
+    msgs = build_messages(SUBJECT, COMPS, "What is a fair offer?", mode="qa")
+    system = msgs[0]["content"]
+    user = msgs[1]["content"]
+    # system prompt forbids invention / outside knowledge
+    assert "Never invent" in system or "never invent" in system.lower()
+    assert "outside" in system.lower()
+    # user message fences the data and restates the rule
+    assert "=== DATA" in user and "=== END DATA ===" in user
+    assert "only the DATA" in user
+
+
 def test_service_not_configured_without_key():
     svc = LLMService(api_key=None, model="x")
     assert svc.configured is False

@@ -16,16 +16,25 @@ from typing import Any
 import httpx
 
 SYSTEM_PROMPT = (
-    "You are KV Capital's Calgary residential comp-analysis assistant. "
-    "Answer ONLY using the structured data provided below (the subject property "
-    "and its ranked comparable sales). Do not invent facts, sales, or attributes "
-    "that are not present in the data, and do not use outside market knowledge. "
-    "Cite comparables by their list number in square brackets, e.g. [#1], [#2], so "
-    "each claim is traceable to a specific comp row. "
-    "When asked for a value or offer estimate, give a RANGE grounded in the "
-    "comparable sale prices, briefly explain the basis, and note it is an "
-    "automated estimate — not a formal appraisal or financial advice. "
-    "If the provided data is insufficient to answer, say so plainly rather than guessing."
+    "You are KV Capital's Calgary residential comp-analysis assistant. You answer "
+    "STRICTLY from the DATA block in the user message and from nothing else.\n"
+    "HARD RULES — follow all of them:\n"
+    "1. Use ONLY the subject and comparable-sales facts in the DATA. Never invent, "
+    "estimate, or recall any address, price, date, distance, size, year, or other "
+    "number that is not explicitly present in the DATA.\n"
+    "2. Do NOT use outside or prior market knowledge, neighbourhood reputation, or "
+    "assumptions. If a fact is not in the DATA, state that it is not available.\n"
+    "3. The ONLY new numbers you may produce are simple aggregations of the comparable "
+    "sale prices that are already listed (their minimum, maximum, median, or average). "
+    "Do not apply growth rates, adjustments, or invented multipliers of your own.\n"
+    "4. Cite every comparable you rely on by its list number in square brackets, e.g. "
+    "[#1], [#3], so each statement is traceable to a specific row.\n"
+    "5. If the DATA is insufficient to answer, say exactly what is missing and stop — "
+    "do not guess or fill gaps.\n"
+    "6. Any value or offer figure must be a RANGE taken from the listed comparable "
+    "sale prices, and you must append: 'Automated estimate from the listed comps — "
+    "not a formal appraisal or financial advice.'\n"
+    "Be concise, factual, and do not speculate."
 )
 
 SUMMARY_INSTRUCTION = (
@@ -81,13 +90,28 @@ def build_messages(
     question: str | None,
     mode: str = "qa",
 ) -> list[dict[str, str]]:
-    """Build the chat messages for a grounded Q&A or summary request."""
+    """Build the chat messages for a grounded Q&A or summary request.
+
+    The subject + comps are wrapped in an explicit ``DATA`` fence and the answer
+    instruction is restated after it, so the model is anchored to those facts and
+    cannot draw on outside knowledge.
+    """
     context = build_context(subject, comparables)
     if mode == "summary":
-        user = f"{context}\n\n{SUMMARY_INSTRUCTION}"
+        task = SUMMARY_INSTRUCTION
     else:
         q = (question or "").strip() or "Summarize the comparable sales for this subject."
-        user = f"{context}\n\nQUESTION: {q}"
+        task = f"QUESTION: {q}"
+    user = (
+        "=== DATA (the ONLY facts you may use) ===\n"
+        f"{context}\n"
+        "=== END DATA ===\n\n"
+        f"{task}\n\n"
+        "Answer using only the DATA above. Do not introduce any number, address, or "
+        "fact that is not in it; the only new numbers allowed are min/max/median/average "
+        "of the listed comp sale prices. Cite comps as [#n]. If the DATA cannot answer "
+        "the question, say what is missing instead of guessing."
+    )
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user},
@@ -118,7 +142,7 @@ class LLMService:
         comparables: list[dict[str, Any]],
         question: str | None = None,
         mode: str = "qa",
-        temperature: float = 0.2,
+        temperature: float = 0.0,
         max_tokens: int = 700,
     ) -> dict[str, Any]:
         if not self.configured:
@@ -167,7 +191,7 @@ class LLMService:
         comparables: list[dict[str, Any]],
         question: str | None = None,
         mode: str = "qa",
-        temperature: float = 0.2,
+        temperature: float = 0.0,
         max_tokens: int = 700,
     ) -> Iterator[str]:
         """Yield answer text deltas as they arrive (Groq SSE streaming)."""
