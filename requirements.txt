@@ -1,0 +1,9 @@
+# Runtime + API layer for the KV comp-analysis service.
+# Lower bounds chosen so prebuilt wheels exist for Python 3.14 (the repo .venv).
+pymongo>=4.17
+dnspython>=2.8
+fastapi>=0.136
+uvicorn[standard]>=0.49
+pydantic>=2.13
+python-dotenv>=1.2
+httpx>=0.28

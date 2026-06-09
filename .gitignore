@@ -1,0 +1,29 @@
+# --- Secrets / local config ---
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# --- Data (large; never commit) ---
+# Raw GeoJSON is multi-GB and processed NDJSON is hundreds of MB.
+data/raw/
+data/processed/
+*.ndjson
+*.geojson
+*.parquet
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

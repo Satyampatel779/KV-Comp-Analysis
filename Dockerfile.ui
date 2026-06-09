@@ -1,0 +1,15 @@
+# Streamlit UI image — thin HTTP client of the FastAPI service.
+FROM python:3.13-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+COPY requirements-ui.txt .
+RUN pip install -r requirements-ui.txt
+
+COPY app/ ./app/
+
+EXPOSE 8501
+# API_BASE_URL is supplied at runtime (docker-compose sets it to http://api:8000).
+CMD ["streamlit", "run", "app/streamlit_app.py", \
+     "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]

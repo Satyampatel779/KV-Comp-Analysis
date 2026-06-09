@@ -1,0 +1,16 @@
+# Keep images small and free of secrets/large data.
+.venv/
+data/
+.git/
+.gitignore
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+.env.*
+*.ndjson
+*.geojson
+*.parquet
+README*.md

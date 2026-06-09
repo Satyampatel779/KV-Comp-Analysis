@@ -1,0 +1,14 @@
+# FastAPI service image — reuses the existing engine in scripts/.
+FROM python:3.13-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY scripts/ ./scripts/
+
+EXPOSE 8000
+# MONGODB_URI / MONGODB_DB / API_KEY are supplied at runtime (see docker-compose.yml).
+CMD ["uvicorn", "api_main:app", "--app-dir", "scripts", "--host", "0.0.0.0", "--port", "8000"]

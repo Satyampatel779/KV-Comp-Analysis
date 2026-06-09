@@ -1,0 +1,27 @@
+# KV comp-analysis full stack: FastAPI (api) + Streamlit (ui).
+# Reads MONGODB_URI / MONGODB_DB / API_KEY from the local .env (compose auto-loads it).
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      MONGODB_URI: ${MONGODB_URI:?set MONGODB_URI in .env}
+      MONGODB_DB: ${MONGODB_DB:-kv_comp_analysis}
+      API_KEY: ${API_KEY:-}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    environment:
+      API_BASE_URL: http://api:8000
+      API_KEY: ${API_KEY:-}
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    restart: unless-stopped
