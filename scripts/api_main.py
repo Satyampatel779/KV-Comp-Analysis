@@ -197,7 +197,7 @@ def ask(
     except LLMUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return AskResponse(subject=result["subject"], **answer)
+    return AskResponse(subject=result["subject"], comparables=result["comparables"], **answer)
 
 
 @app.post("/ask/stream", dependencies=[Depends(require_api_key)])

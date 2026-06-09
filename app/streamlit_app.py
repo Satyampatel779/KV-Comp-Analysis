@@ -21,6 +21,8 @@ import json
 import math
 import os
 import statistics
+import sys
+from pathlib import Path
 from typing import Any
 
 import altair as alt
@@ -28,6 +30,11 @@ import httpx
 import pandas as pd
 import pydeck as pdk
 import streamlit as st
+
+# Reuse the engine's value-band/confidence logic verbatim (single source of truth)
+# so the UI never drifts from the API. comp_analysis is dependency-free (stdlib only).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from comp_analysis import summarize_value  # noqa: E402
 
 try:
     from dotenv import load_dotenv
@@ -173,46 +180,6 @@ def has_coords(obj: dict[str, Any]) -> bool:
 # --------------------------------------------------------------------------- #
 # Analysis helpers (recompute on the user's included subset)
 # --------------------------------------------------------------------------- #
-def recompute_band(comps: list[dict[str, Any]]) -> dict[str, Any] | None:
-    prices = [c["sale_price"] for c in comps if isinstance(c.get("sale_price"), (int, float))]
-    n = len(prices)
-    if n == 0:
-        return None
-    mean = sum(prices) / n
-    stdev = statistics.pstdev(prices) if n > 1 else 0.0
-    cv = (stdev / mean) if mean else 0.0
-    rec = [c.get("recency_days") for c in comps if isinstance(c.get("recency_days"), (int, float))]
-    med_rec = statistics.median(rec) if rec else None
-    taj = [c["time_adjusted_price"] for c in comps if isinstance(c.get("time_adjusted_price"), (int, float))]
-    score = 100
-    factors = []
-    if n < 3:
-        score -= 45; factors.append(f"only {n} comp(s)")
-    elif n < 6:
-        score -= 20; factors.append(f"{n} comps")
-    if cv > 0.25:
-        score -= 30; factors.append(f"wide spread ({cv*100:.0f}% CV)")
-    elif cv > 0.15:
-        score -= 15; factors.append(f"moderate spread ({cv*100:.0f}% CV)")
-    if med_rec and med_rec > 365:
-        score -= 20; factors.append("stale sales")
-    elif med_rec and med_rec > 270:
-        score -= 10; factors.append("aging sales")
-    score = max(0, score)
-    level = "high" if score >= 75 else "medium" if score >= 50 else "low"
-    return {
-        "count": n,
-        "median": statistics.median(prices),
-        "min": min(prices),
-        "max": max(prices),
-        "time_adjusted_median": statistics.median(taj) if taj else None,
-        "cv": cv,
-        "confidence": score,
-        "level": level,
-        "factors": factors or ["solid comp set"],
-    }
-
-
 def outlier_flags(prices: list[float]) -> list[bool]:
     if len(prices) < 4:
         return [False] * len(prices)
@@ -260,14 +227,15 @@ def build_pdf(subject: dict[str, Any], band: dict[str, Any] | None,
     ))
     pdf.ln(2)
 
-    if band:
+    if band and band.get("count"):
+        conf = band["confidence"]
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 7, _latin("Implied value band"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.set_font("Helvetica", "", 10)
         pdf.multi_cell(0, 5, _latin(
-            f"{fmt_money(band['min'])} - {fmt_money(band['max'])}  (median {fmt_money(band['median'])})  "
-            f"from {band['count']} comps\n"
-            f"Confidence: {band['confidence']}/100 ({band['level']}) - {', '.join(band['factors'])}"
+            f"{fmt_money(band['min_price'])} - {fmt_money(band['max_price'])}  "
+            f"(median {fmt_money(band['median_price'])})  from {band['count']} comps\n"
+            f"Confidence: {conf['score']}/100 ({conf['level']}) - {', '.join(conf['factors'])}"
         ))
         pdf.ln(1)
         pdf.set_font("Helvetica", "B", 11)
@@ -588,7 +556,7 @@ if {"latitude", "longitude"}.issubset(df.columns):
     df.loc[ok, "map"] = df[ok].apply(lambda r: google_maps_link(r["latitude"], r["longitude"]), axis=1)
 
 show_cols = ["rank", "include", "address", "community", "sale_date", "sale_price",
-             "time_adjusted_price", "price_per_sqm", "distance_km", "recency_days",
+             "time_adjusted_price", "price_per_land_sqm", "distance_km", "recency_days",
              "assessed_value_gap_ratio", "score", "meets_kv_criteria", "outlier", "map"]
 show_cols = [c for c in show_cols if c in df.columns]
 edited = st.data_editor(
@@ -601,7 +569,7 @@ edited = st.data_editor(
         "include": st.column_config.CheckboxColumn("✓", help="Untick to exclude from the value band"),
         "sale_price": st.column_config.NumberColumn("Sale $", format="$%d"),
         "time_adjusted_price": st.column_config.NumberColumn("Today-adj $", format="$%d"),
-        "price_per_sqm": st.column_config.NumberColumn("$/sqm", format="$%.0f"),
+        "price_per_land_sqm": st.column_config.NumberColumn("$/land-sqm", format="$%.0f"),
         "meets_kv_criteria": st.column_config.CheckboxColumn("KV ✓", help="Meets ALL of KV's comp criteria"),
         "outlier": st.column_config.CheckboxColumn("⚠️", help="Price is an IQR outlier"),
         "map": st.column_config.LinkColumn("Map", display_text="📍"),
@@ -614,22 +582,23 @@ included_with_rank = [
     (i + 1, c) for i, (c, keep) in enumerate(zip(comps_all, included_mask)) if keep
 ]
 included = [c for _, c in included_with_rank]
-band = recompute_band(included)
+band = summarize_value(included)
 
 
 # --------------------------------------------------------------------------- #
 # Value band + confidence
 # --------------------------------------------------------------------------- #
-if band:
+if band.get("count"):
+    conf = band["confidence"]
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Comps used", f"{band['count']} / {len(comps_all)}")
-    m2.metric("Median price", fmt_money(band["median"]))
+    m2.metric("Median price", fmt_money(band["median_price"]))
     m3.metric("Today-adjusted median", fmt_money(band["time_adjusted_median"]))
-    conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(band["level"], "⚪")
-    m4.metric("Confidence", f"{conf_emoji} {band['confidence']}/100")
+    conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(conf["level"], "⚪")
+    m4.metric("Confidence", f"{conf_emoji} {conf['score']}/100")
     st.info(
-        f"**Implied value band:** {fmt_money(band['min'])} – {fmt_money(band['max'])} "
-        f"(median {fmt_money(band['median'])}). Confidence {band['level']} — {', '.join(band['factors'])}."
+        f"**Implied value band:** {fmt_money(band['min_price'])} – {fmt_money(band['max_price'])} "
+        f"(median {fmt_money(band['median_price'])}). Confidence {conf['level']} — {', '.join(conf['factors'])}."
     )
     kv_ok = sum(1 for c in included if c.get("meets_kv_criteria"))
     st.caption(
@@ -751,7 +720,7 @@ for rank, c in included_with_rank:
         "sale_date": (c.get("sale_date") or "")[:10],
         "sale_price": c.get("sale_price"),
         "time_adjusted_price": c.get("time_adjusted_price"),
-        "price_per_sqm": c.get("price_per_sqm"),
+        "price_per_land_sqm": c.get("price_per_land_sqm"),
         "distance_km": c.get("distance_km"),
         "recency_days": c.get("recency_days"),
         "bedrooms": c.get("bedrooms"),

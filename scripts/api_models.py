@@ -174,7 +174,7 @@ class Comparable(BaseModel):
     sale_date: str | None = None
     sale_price: float | None = None
     time_adjusted_price: float | None = None
-    price_per_sqm: float | None = None
+    price_per_land_sqm: float | None = None
     score: float | None = None
     distance_km: float | None = None
     recency_days: int | None = None
@@ -190,7 +190,7 @@ class ValueAnalysis(BaseModel):
     median_price: float | None = None
     min_price: float | None = None
     max_price: float | None = None
-    price_per_sqm_median: float | None = None
+    price_per_land_sqm_median: float | None = None
     time_adjusted_median: float | None = None
     confidence: dict[str, Any] = Field(default_factory=dict)
 
@@ -212,3 +212,5 @@ class AskResponse(BaseModel):
     mode: str
     used_comps: int
     subject: dict[str, Any]
+    verification: dict[str, Any] = Field(default_factory=dict)
+    comparables: list[Comparable] = Field(default_factory=list)

@@ -1,5 +1,5 @@
 # Runtime + API layer for the KV comp-analysis service.
-# Lower bounds chosen so prebuilt wheels exist for Python 3.14 (the repo .venv).
+# Targets Python >=3.11 (matches pyproject + the 3.13-slim Docker images).
 pymongo>=4.17
 dnspython>=2.8
 fastapi>=0.136

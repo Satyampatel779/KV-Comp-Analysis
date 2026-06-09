@@ -10,6 +10,7 @@ kept in module-level pure functions so it can be unit-tested without a network.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -123,6 +124,53 @@ def build_messages(
     ]
 
 
+_CITE_RE = re.compile(r"\[#(\d+)\]")
+_DOLLAR_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+
+
+def verify_grounding(
+    answer: str, subject: dict[str, Any], comparables: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Programmatically check the answer obeys the grounding contract.
+
+    Enforces what the prompt only asks for: every ``[#n]`` citation must point at
+    a real comp, and every dollar figure must fall within the listed comps'
+    price range (sale + time-adjusted) — or the subject's assessed value — so the
+    model can't smuggle in an invented number. Returns the parsed citations and
+    any violations (a flag, not a hard block).
+    """
+    n = len(comparables)
+    warnings: list[str] = []
+
+    cited = sorted({int(m) for m in _CITE_RE.findall(answer or "")})
+    bad = [c for c in cited if c < 1 or c > n]
+    if bad:
+        warnings.append(f"cites [#{', #'.join(map(str, bad))}] but only [#1]–[#{n}] exist")
+
+    allowed: list[float] = []
+    for c in comparables:
+        for key in ("sale_price", "time_adjusted_price"):
+            v = c.get(key)
+            if isinstance(v, (int, float)):
+                allowed.append(float(v))
+    sv = (subject or {}).get("assessed_value")
+    if isinstance(sv, (int, float)):
+        allowed.append(float(sv))
+
+    figures = [float(x.replace(",", "")) for x in _DOLLAR_RE.findall(answer or "")]
+    if allowed and figures:
+        lo, hi = min(allowed) * 0.97, max(allowed) * 1.03
+        outside = [f for f in figures if f >= 1000 and not (lo <= f <= hi)]
+        if outside:
+            shown = ", ".join(f"${f:,.0f}" for f in sorted(set(outside)))
+            warnings.append(
+                f"dollar figure(s) {shown} fall outside the comp range "
+                f"(${min(allowed):,.0f}–${max(allowed):,.0f})"
+            )
+
+    return {"ok": not warnings, "cited": cited, "warnings": warnings}
+
+
 class LLMService:
     def __init__(
         self,
@@ -182,11 +230,16 @@ class LLMService:
         except (KeyError, IndexError, AttributeError) as exc:
             raise LLMUnavailable("LLM returned an unexpected response shape.") from exc
 
+        verification = verify_grounding(answer, subject, comparables)
+        if not verification["ok"]:
+            answer += "\n\n⚠️ Automated grounding check: " + "; ".join(verification["warnings"]) + "."
+
         return {
             "answer": answer,
             "model": self.model,
             "mode": mode,
             "used_comps": min(len(comparables), 12),
+            "verification": verification,
         }
 
     def stream(
@@ -222,6 +275,7 @@ class LLMService:
                     if resp.status_code != 200:
                         body = resp.read().decode("utf-8", "replace")[:300]
                         raise LLMUnavailable(f"LLM upstream error {resp.status_code}: {body}")
+                    chunks: list[str] = []
                     for line in resp.iter_lines():
                         if not line or not line.startswith("data: "):
                             continue
@@ -233,6 +287,12 @@ class LLMService:
                         except (KeyError, IndexError, json.JSONDecodeError):
                             continue
                         if delta:
+                            chunks.append(delta)
                             yield delta
         except httpx.HTTPError as exc:
             raise LLMUnavailable(f"LLM streaming request failed: {exc}") from exc
+
+        # Same grounding guard as ask(), appended once the full answer is known.
+        verification = verify_grounding("".join(chunks), subject, comparables)
+        if not verification["ok"]:
+            yield "\n\n⚠️ Automated grounding check: " + "; ".join(verification["warnings"]) + "."

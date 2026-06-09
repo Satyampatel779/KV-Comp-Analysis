@@ -73,9 +73,16 @@ kv-comp-analysis/
 ## Setup
 
 ```bash
-cd /d/Study/Project/Hackathon
-cp .env.example .env          # paste your MONGODB_URI into .env
+cd <repo>                     # this repo (dev machine: /d/Study/Project/Hackathon)
+cp .env.example .env          # paste your MONGODB_URI (and GROQ_API_KEY for the assistant)
+
+# Fresh clone on any OS — create a venv:
+python -m venv .venv
+# Windows: .venv\Scripts\python.exe   ·   macOS/Linux: .venv/bin/python
 ```
+
+> The commands below use the dev machine's `.venv/Scripts/python.exe` (Windows). On macOS/Linux
+> substitute `.venv/bin/python`, or just `python` inside an activated venv.
 
 ## Run locally (two processes)
 
@@ -160,7 +167,15 @@ is a small change if desired.
 - **Calgary MVP only** on the Atlas free tier (120k properties / 69k synthetic sales) — not the full
   578k set, no Edmonton, no MLS feed.
 - **Synthetic sales** (mirroring the brief's anonymized-data approach); the engine is source-agnostic.
+  ⚠️ **Known validity caveat:** the synthetic `sale_price` is derived from each property's
+  `assessed_value` (× a per-property multiplier), so the implied value band is partly *assessment
+  re-derived* rather than independent market signal. With real arm's-length MLS sale prices this
+  circularity disappears and the same engine surfaces genuine market evidence — we flag it rather
+  than let it read as a real valuation.
 - **No full automation** — by design; the underwriter makes the final pick.
+- **Breadth was a deliberate scope choice.** The interactive UI, imagery, PDF/CSV handoff, permalinks
+  and Docker are demo/handoff polish; given more time we'd reinvest it in comp-selection depth (true
+  GLA, a per-feature dollar-adjustment grid, weight calibration) rather than more surface area.
 
 ## Edge cases handled
 

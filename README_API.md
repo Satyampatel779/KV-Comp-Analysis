@@ -121,9 +121,9 @@ missing required fields like `assessed_value`).
 - `annual_appreciation_rate` — e.g. `0.03`; drives each comp's `time_adjusted_price`.
 - `use_geo` — `true` (default) uses `$geoNear` retrieval when the subject has coordinates.
 
-Each comp now also includes `time_adjusted_price`, `price_per_sqm`, `bedrooms`/`bathrooms`/
+Each comp now also includes `time_adjusted_price`, `price_per_land_sqm`, `bedrooms`/`bathrooms`/
 `garage_count` (+ gaps). The response carries an `analysis` block: `median_price`, `min/max_price`,
-`price_per_sqm_median`, `time_adjusted_median`, and a `confidence` `{score, level, factors}`.
+`price_per_land_sqm_median`, `time_adjusted_median`, and a `confidence` `{score, level, factors}`.
 
 ### `POST /ask`
 Grounded LLM Q&A (Groq, OpenAI-compatible) over the subject + its ranked comps. The model is

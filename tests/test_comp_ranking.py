@@ -238,7 +238,7 @@ def test_higher_distance_weight_lowers_score(engine):
 
 def test_time_adjusted_price_and_ppsqm(engine):
     out = _rank(engine, _make_sale(), rate=0.10)
-    assert out["price_per_sqm"] == pytest.approx(605000.0 / 510.0, abs=0.1)
+    assert out["price_per_land_sqm"] == pytest.approx(605000.0 / 510.0, abs=0.1)
     # positive appreciation over a positive age => time-adjusted >= nominal
     assert out["time_adjusted_price"] >= out["sale_price"]
 
@@ -267,12 +267,12 @@ def test_address_tokens_and_token_regex():
 
 def test_summarize_value_confidence():
     comps = [
-        {"sale_price": 600000, "recency_days": 30, "price_per_sqm": 1000, "time_adjusted_price": 605000},
-        {"sale_price": 610000, "recency_days": 40, "price_per_sqm": 1010, "time_adjusted_price": 615000},
-        {"sale_price": 590000, "recency_days": 50, "price_per_sqm": 990, "time_adjusted_price": 595000},
-        {"sale_price": 605000, "recency_days": 60, "price_per_sqm": 1005, "time_adjusted_price": 610000},
-        {"sale_price": 615000, "recency_days": 20, "price_per_sqm": 1020, "time_adjusted_price": 620000},
-        {"sale_price": 600000, "recency_days": 35, "price_per_sqm": 1000, "time_adjusted_price": 606000},
+        {"sale_price": 600000, "recency_days": 30, "price_per_land_sqm": 1000, "time_adjusted_price": 605000},
+        {"sale_price": 610000, "recency_days": 40, "price_per_land_sqm": 1010, "time_adjusted_price": 615000},
+        {"sale_price": 590000, "recency_days": 50, "price_per_land_sqm": 990, "time_adjusted_price": 595000},
+        {"sale_price": 605000, "recency_days": 60, "price_per_land_sqm": 1005, "time_adjusted_price": 610000},
+        {"sale_price": 615000, "recency_days": 20, "price_per_land_sqm": 1020, "time_adjusted_price": 620000},
+        {"sale_price": 600000, "recency_days": 35, "price_per_land_sqm": 1000, "time_adjusted_price": 606000},
     ]
     s = summarize_value(comps)
     assert s["count"] == 6

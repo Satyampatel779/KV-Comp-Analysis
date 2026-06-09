@@ -14,6 +14,7 @@ from llm_service import (
     LLMUnavailable,
     build_context,
     build_messages,
+    verify_grounding,
 )
 
 SUBJECT = {
@@ -83,3 +84,31 @@ def test_service_not_configured_without_key():
     assert svc.configured is False
     with pytest.raises(LLMUnavailable):
         svc.ask(subject=SUBJECT, comparables=COMPS, question="hi")
+
+
+# --------------------------------------------------------------------------- #
+# Grounding verifier — citations must be real, dollar figures must be in range
+# --------------------------------------------------------------------------- #
+_VC = [
+    {"sale_price": 600000, "time_adjusted_price": 605000},
+    {"sale_price": 620000, "time_adjusted_price": 625000},
+]
+_VS = {"assessed_value": 610000}
+
+
+def test_verify_grounding_accepts_in_range_answer():
+    out = verify_grounding("A fair range is $600,000–$620,000 per [#1] and [#2].", _VS, _VC)
+    assert out["ok"] is True
+    assert out["cited"] == [1, 2]
+
+
+def test_verify_grounding_flags_bad_citation():
+    out = verify_grounding("Strong comp [#5].", _VS, _VC)
+    assert out["ok"] is False
+    assert any("5" in w for w in out["warnings"])
+
+
+def test_verify_grounding_flags_out_of_range_number():
+    out = verify_grounding("This home is worth $950,000.", _VS, _VC)
+    assert out["ok"] is False
+    assert any("950,000" in w for w in out["warnings"])
