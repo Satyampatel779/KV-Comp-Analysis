@@ -1,4 +1,4 @@
-# Loom walkthrough — read-aloud script (~8 min)
+# Loom walkthrough — read-aloud script (~8–9 min)
 
 **How to use this:** read the normal lines out loud, just as they're written.
 `(pause)` = take a breath. `(beat)` = a tiny stop. `[SHOW: …]` = what to click — don't read these out.
@@ -24,7 +24,7 @@ from a strong first draft instead of a blank page. (pause) Let me show you.
 
 ---
 
-### 1 · What I built, and what I left out  (0:45 – 1:45)
+### 1 · What I built, and what I left out  (0:45 – 1:40)
 
 First, let me be honest about what I chose to build — (beat) because knowing what to leave out matters
 just as much. (pause)
@@ -40,7 +40,26 @@ AI model that writes the explanations. (pause) Let's see it run.
 
 ---
 
-### 2 · Finding the comparable sales  (1:45 – 3:45)
+### 1.5 · The data behind it  (1:40 – 2:30)
+
+Quick word on the data — (beat) because it's most of the work you don't see. (pause)
+
+I started with the City of Calgary's public property records — (beat) the same kind of public info your
+team already uses. (pause) I cleaned all of it up and put it into one tidy shape: (beat) the type of
+home, the year it was built, the lot size, where it sits, and its assessed value. (pause)
+
+Real sale prices aren't public, so I created realistic stand-in sales to test against. (beat) I'll come
+back to why that matters in a minute. (pause)
+
+Then I loaded it all into a cloud database — (beat) about a hundred and twenty thousand homes and
+seventy thousand sales — (beat) and I indexed the locations, so that "within three kilometres" check is
+basically instant. (pause) It's a big pile of data, so I trimmed it to a free, city-wide slice that still
+covers all of Calgary. (pause) And the whole thing rebuilds from a few small scripts — (beat) so nothing
+here is a black box. (pause)
+
+---
+
+### 2 · Finding the comparable sales  (2:30 – 4:15)
 *[SHOW: the search box]*
 
 I'll start by finding a property. (pause) The search is easy on you — (beat) you can type part of the
@@ -51,9 +70,11 @@ When it's on, the tool only keeps sales that match the rules your team gave me: 
 (beat) within about three kilometres, (beat) sold in the last year, (beat) close in age, (beat) and
 close in size. (pause)
 
-Here's the list. *[SHOW: the comps table]* (pause) This **tick column** is the quick read — (beat) a green
-tick means that sale passes *every* one of those rules. (pause) And up top, it tells me how many on the
-list pass all of them. (pause)
+Here's the list. *[SHOW: the comps table]* (pause) That just searched the whole city — (beat) all those
+homes and sales — in a second or two. (pause)
+
+This **tick column** is the quick read — (beat) a green tick means that sale passes *every* one of those
+rules. (pause) And up top, it tells me how many on the list pass all of them. (pause)
 
 I also wanted to show *why* each sale is ranked where it is — (beat) no mystery. *[SHOW: open the "Score breakdown" expander]*
 (pause) This breaks the score down: (beat) how much came from distance, how much from how recently it
@@ -66,7 +87,7 @@ throw a comp out. (pause)
 
 ---
 
-### 3 · The value estimate, and how sure it is  (3:45 – 5:00)
+### 3 · The value estimate, and how sure it is  (4:15 – 5:20)
 *[SHOW: the value-band numbers and the line below]*
 
 From those sales, the tool gives a **value range** — (beat) a low end, a middle, and a high end. (pause)
@@ -84,7 +105,7 @@ a real market answer. (beat) I'd rather say that plainly than pretend otherwise.
 
 ---
 
-### 4 · How it explains itself  (5:00 – 6:30)
+### 4 · How it explains itself  (5:20 – 6:45)
 *[SHOW: scroll down to the "Ask the assistant" chat]*
 
 Now the part that explains things in plain English. (pause) I can just ask it a question. *[SHOW: click "What is a fair offer range?"]*
@@ -108,7 +129,7 @@ tight leash just to explain it. (pause) I went for trust over flash. (pause)
 
 ---
 
-### 5 · Handing it off  (6:30 – 7:15)
+### 5 · Handing it off  (6:45 – 7:30)
 *[SHOW: the export buttons]*
 
 When you're happy with the list, there are two ways to hand it off. (pause) The **spreadsheet** *[SHOW: hover the CSV button]*
@@ -121,7 +142,7 @@ And every property has a real map and an aerial photo with a pin on it, *[SHOW: 
 
 ---
 
-### 6 · The code, and one honest catch  (7:15 – 8:00)
+### 6 · The code, and one honest catch  (7:30 – 8:10)
 *[SHOW: the project folders in your editor]*
 
 A quick word on the code. (pause) It's tidy and split up sensibly — (beat) the engine, the web service,
@@ -136,7 +157,7 @@ line of code. (pause)
 
 ---
 
-### 7 · Wrap up  (8:00 – 8:30)
+### 7 · Wrap up  (8:10 – 8:45)
 *[SHOW: back on the app, the ranked list]*
 
 So that's it. (pause) Good comps first, (beat) everything explained, (beat) and the underwriter still
