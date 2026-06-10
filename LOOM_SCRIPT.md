@@ -1,179 +1,163 @@
-# Loom walkthrough — read-aloud script (~8–9 min)
+# Loom walkthrough — read-aloud script (~7–8 min)
 
-**How to use this:** read the normal lines out loud — but read them like you're talking to a colleague,
-not presenting. The whole point is it shouldn't *sound* like a script. (pause) A few tips:
-glance up at the camera between lines · let yourself slow down · and if you stumble a little, just keep
-going — that actually makes you sound more real, not less.
-`(pause)` = breathe. `(beat)` = tiny stop. `[SHOW: …]` = what to click — don't read those out.
+**How to use this:** read the lines out loud, just as written. Keep it slow and clear.
+`(pause)` = take a breath. `[SHOW: …]` = what to click — don't read these out.
 
 **Before you record:** API + app running · `.env` has the Mongo URI and Groq key · do one search first
 so it's warm · keep the manual-subject tab open as a backup.
 
 ---
 
-### 0 · Hello  (0:00 – 0:45)
-*[SHOW: the app open, a property and its comps already on screen]*
+### 0 · Start  (0:00 – 0:40)
+*[SHOW: the app open, a home and its matches on screen]*
 
-Hey — I'm [your name]. (beat) Thanks for taking a look at this. (pause)
+Hi, I'm [your name]. (pause)
 
-So this whole thing really comes down to one question — (beat) the one every real estate loan starts with:
-(beat) what's this place actually worth? (pause)
+Every home loan starts with one question: (pause) what is this home worth? (pause)
 
-And right now? (beat) Somebody answers that by hand. (beat) Digging up similar sales, one at a time,
-basically starting from a blank page. (pause)
+Right now, someone answers that by hand. They look up similar sales, one by one. (pause)
 
-What I built does that first chunk *for* you. (beat) You give it a property, and a couple seconds later —
-(beat) you've got a ranked list of similar sales, each one with a quick reason next to it. (pause) So you
-start from a real first draft instead of nothing. (pause) Here, let me just show you.
+My tool does that first step for them. (pause) You pick a home, and in a few seconds you get a ranked list
+of similar sales — each one with a short reason. (pause)
 
----
-
-### 1 · What I built, and what I left out  (0:45 – 1:40)
-
-Okay — before I dive in, (beat) let me be straight about what I chose to build. (beat) Because honestly,
-knowing what to leave *out* is half the job here. (pause)
-
-I kept it to homes, in Calgary, one solid set of data — (beat) and one clear goal: (beat) find good
-comparable sales, fast. (beat) That's the part your team said matters most. (pause)
-
-And there's one rule I stuck to the whole way: (beat) this thing *helps* the underwriter. (beat) It
-doesn't replace them. (pause) It hands you the shortlist. (beat) You still make the call. (pause)
-
-It's all built in Python, nothing fancy — (beat) a little web service, a database, a simple web page, and
-an AI model that writes the plain-English parts. (pause) Alright — let's actually look at it.
+So you start with a real first draft, not a blank page. (pause) Let me show you.
 
 ---
 
-### 1.5 · The data behind it  (1:40 – 2:30)
+### 1 · What I built  (0:40 – 1:30)
 
-Real quick on the data — (beat) because honestly, that's most of the work you never see. (pause)
+First, let me be clear about what I built. (pause)
 
-So I started with the City of Calgary's public property records. (beat) Same kind of public info your team
-already pulls. (pause) And I cleaned the whole thing up — (beat) got it all into one tidy shape. (beat) The
-type of home, the year it went up, the lot size, where it sits, what it's assessed at. (pause)
+I kept it simple. Homes in Calgary, one set of data, one job: (pause) find good similar sales, fast. (pause)
+That's the part your team said matters most. (pause)
 
-Now — actual sale prices, those aren't public. (beat) So I had to make up some realistic stand-in sales to
-test against. (beat) Hold that thought, though — I'll come back to it. (pause)
+And one rule the whole way through: (pause) this tool *helps* the underwriter. It does not replace them.
+(pause) It gives you the short list. You still make the final call. (pause)
 
-Then I loaded all of it into a cloud database — (beat) call it a hundred and twenty thousand homes,
-seventy thousand sales — (beat) and I indexed every location, so that "within three kilometres" check is
-basically instant. (pause) It's a *lot* of data, so I trimmed it down to a free slice that still covers the
-whole city. (pause) And the best part — (beat) the whole thing rebuilds from a handful of small scripts.
-(beat) So none of this is a black box. (pause)
+It's all built in Python. A small web service, a database, a simple web page, and an AI model for the
+write-ups. (pause) Let's look at it.
 
 ---
 
-### 2 · Finding the comparable sales  (2:30 – 4:15)
+### 1.5 · The data  (1:30 – 2:15)
+
+A quick note on the data, because that was a lot of the work. (pause)
+
+I started with the City of Calgary's public home records — (pause) the same public info your team already
+uses. (pause) I cleaned it all up and put it in one simple shape: (pause) the type of home, the year it was
+built, the lot size, where it sits, and the city's value for it. (pause)
+
+Real sale prices are not public. So I made realistic stand-in sales to test with. (pause) I'll come back to
+that in a minute. (pause)
+
+Then I loaded it all into a cloud database — (pause) about 120,000 homes and 70,000 sales. (pause) And I
+set it up so the "within 3 kilometres" search is instant. (pause)
+
+It's a lot of data, so I kept a free slice that still covers the whole city. (pause) And it all rebuilds
+from a few small scripts. Nothing here is hidden. (pause)
+
+---
+
+### 2 · Finding similar sales  (2:15 – 3:45)
 *[SHOW: the search box]*
 
-Okay, let me find a property. (pause) And the search is pretty forgiving — (beat) I can just type part of
-the address, in any order, and it'll find it. *[SHOW: type `lynnwood dr`, pick a result, click "Use this subject"]*
+Let me find a home. (pause) The search is easy — I can type part of the address, in any order. *[SHOW: type `lynnwood dr`, pick a result, click "Use this subject"]*
 
-Now — see this switch over here? (beat) **KV comp criteria.** *[SHOW: point to the sidebar checkbox]* (pause)
-When that's on, it only keeps sales that match the rules your team gave me on the call. (beat) Same kind of
-home. (beat) Within about three kilometres. (beat) Sold in the last year. (beat) Close in age. (beat) Close
-in size. (pause)
+Now look at this switch — **KV comp criteria.** *[SHOW: point to the sidebar checkbox]* (pause) When it's
+on, it only keeps sales that match the rules your team gave me. (pause) Same type of home. Within about 3
+kilometres. Sold in the last year. Close in age. Close in size. (pause)
 
-And — there's the list. *[SHOW: the comps table]* (pause) That just searched the whole city — (beat) all
-those homes and sales — in like, two seconds. (pause)
+And here's the list. *[SHOW: the table]* (pause) That searched the whole city in about two seconds. (pause)
 
-See this little tick column? (beat) A green tick means that sale clears *every single* one of those rules.
-(pause) And right up top, it tells me how many of them clear the whole bar. (pause)
+See this tick column? (pause) A green tick means that sale passes *all* of those rules. (pause) And up top,
+it shows how many pass all of them. (pause)
 
-And look — I really didn't want this to be some mystery score. *[SHOW: open the "Score breakdown" expander]*
-(pause) So this breaks it right down. (beat) How much came from distance, how much from how recently it
-sold, how much from the price gap. (pause) So if anyone asks "well, why's *this* one ahead of *that* one?" —
-(beat) it's right there. (pause)
+I also wanted to show *why* each sale ranks where it does. *[SHOW: open the "Score breakdown" expander]*
+(pause) This breaks the score down — (pause) how much came from distance, from how recently it sold, from
+the price gap. (pause) So if someone asks why one sale beats another, the answer is right here. (pause)
 
-Oh, and one thing happening quietly in the background — (beat) I only ever use real, completed sales. (beat)
-Never something that was just listed and never actually sold. (pause) Your team told me that's one of the
-big reasons people toss a comp out. (pause)
+One more thing: I only use real, finished sales. (pause) Never a home that was just listed and never sold.
+(pause) Your team said that's a top reason people drop a sale. (pause)
 
 ---
 
-### 3 · The value estimate, and how sure it is  (4:15 – 5:20)
-*[SHOW: the value-band numbers and the line below]*
+### 3 · The value, and how sure it is  (3:45 – 4:45)
+*[SHOW: the value range]*
 
-So from those sales, you get a value *range* — (beat) a low end, a middle, and a high end. (pause) And
-right next to it, a confidence score. (beat) That climbs when there's plenty of sales, when the prices sit
-close together, and when they're recent. (pause)
+From those sales, you get a value range — (pause) a low, a middle, and a high. (pause) Next to it is a
+score for how sure it is. (pause) It goes up with more sales, with prices that are close together, and with
+recent sales. (pause)
 
-And you stay in the driver's seat the whole time. *[SHOW: untick one comp in the table]* (pause) Don't like
-one of these sales? (beat) Untick it — (beat) and watch, the range and the confidence just... update.
-(pause) Right there. (beat) It even flags the odd ones out for you. (pause)
+And you stay in control. *[SHOW: untick one comp]* (pause) If a sale looks wrong, untick it — (pause) and
+the range and the score update right away. (pause) It also flags the odd ones for you. (pause)
 
-Okay — and here's where I want to be totally straight with you. *[SHOW: stay on screen]* (pause) Remember
-those made-up sale prices? (beat) They're built off the city's assessed values. (beat) So this range leans
-on those assessments a bit more than it would in real life. (pause) Plug in real sale prices, though — (beat)
-and the exact same tool gives you a real market answer. (beat) I'd just rather tell you that straight than
-dress it up. (pause)
+Now let me be honest about one thing. *[SHOW: stay on screen]* (pause) Remember those stand-in sale prices?
+(pause) They come from the city's values. (pause) So this range leans on those city values more than it
+would in real life. (pause) With real sale prices, the same tool gives a real market answer. (pause) I'd
+rather just tell you that plainly. (pause)
 
 ---
 
-### 4 · How it explains itself  (5:20 – 6:45)
+### 4 · How it explains itself  (4:45 – 6:00)
 *[SHOW: scroll to the "Ask the assistant" chat]*
 
-Right — now the part that explains itself, in plain English. (pause) I can literally just ask it. *[SHOW: click "What is a fair offer range?"]*
+Now the part that explains things in plain words. (pause) I can just ask it a question. *[SHOW: click "What is a fair offer range?"]*
 
-(pause — let it type out) Okay, watch what it does here. (beat) It gives a *range* — not some magic single
-number. (beat) It points to the exact sales it used — (beat) see those little numbers in brackets? (beat)
-And it always reminds you: (beat) this is an estimate, not an official appraisal. (pause)
+(pause — let it answer) Look at what it does. (pause) It gives a range, not one magic number. (pause) It
+points to the exact sales it used — see the small numbers in brackets. (pause) And it always says: this is
+an estimate, not an official appraisal. (pause)
 
-And this is on a *short* leash, on purpose. (pause) It's only allowed to use the sales sitting right in
-front of it. (beat) No guessing. (beat) No inventing numbers. (pause) And here's the thing — (beat) I don't
-just *trust* it to behave. (beat) I check it. (pause) Every dollar amount it gives has to actually fit
-inside the range of those sales. (beat) Every sale it points to has to be real. (pause) If it ever steps
-outside that — (beat) the answer gets a warning slapped right on it. (pause)
+This part is kept on a tight leash, on purpose. (pause) It can only use the sales in front of it. No
+guessing. No made-up numbers. (pause)
 
-Let me just prove that to you. *[SHOW: type an out-of-data question, e.g. "what are the school ratings and crime rate here?"]*
-(pause — let it answer) See that? (beat) Instead of just... making something up — (beat) it tells me
-straight: that's not in the data. (pause)
+And I don't just trust it — I check it. (pause) Every dollar amount has to fit inside the range of those
+sales. (pause) Every sale it points to has to be real. (pause) If it breaks that, the answer gets a
+warning. (pause)
 
-And that was a real decision on my end. (pause) I *didn't* build some AI that goes off and does whatever it
-feels like. (beat) For a loan? (beat) I want the search steady and repeatable — (beat) and the AI kept on a
-short leash, just explaining it. (pause) Trust over flash. (pause)
+Let me show you. *[SHOW: type "what are the school ratings and crime rate here?"]* (pause — let it answer)
+See? (pause) Instead of making something up, it says plainly: that's not in the data. (pause)
+
+And that was on purpose. (pause) I did not build an AI that does whatever it wants. (pause) For a loan, I
+want the search to be steady and repeatable — (pause) and the AI on a tight leash, just explaining. (pause)
+Trust over flash. (pause)
 
 ---
 
-### 5 · Handing it off  (6:45 – 7:30)
+### 5 · Handing it off  (6:00 – 6:40)
 *[SHOW: the export buttons]*
 
-Okay — once you're happy with the list, (beat) there's two ways to take it with you. (pause) The
-spreadsheet *[SHOW: hover the CSV button]* drops the sales straight into your 41-H-P template — (beat) with
-blank columns sitting there, ready for your adjustments. (pause) And the PDF *[SHOW: hover the PDF button]*
-is a clean one-pager. (beat) The property, the range, the sales, the write-up, and a shot from above.
-(pause) Something you can just drop in the file. (pause)
+When you're happy with the list, there are two ways to take it. (pause) The spreadsheet *[SHOW: hover the CSV button]*
+drops the sales into your 41-H-P template, with blank columns for your adjustments. (pause) The PDF *[SHOW: hover the PDF button]*
+is a clean one-page summary — (pause) the home, the range, the sales, the write-up, and a photo from above.
+(pause)
 
-Oh — and every property's got a real map, and an aerial photo with a pin right on it. *[SHOW: scroll up to the map / aerial for a second]*
-(beat) So these aren't just rows in a table — (beat) you can actually *see* where everything is. (pause)
+And every home has a map and an aerial photo with a pin on it. *[SHOW: scroll up to the map / aerial]* (pause)
+So the sales aren't just rows. You can see where they are. (pause)
 
 ---
 
-### 6 · The code, and one honest catch  (7:30 – 8:10)
+### 6 · The code, and one honest catch  (6:40 – 7:20)
 *[SHOW: the project folders in your editor]*
 
-Quick word on the code itself. (pause) It's tidy — (beat) split up the way you'd want it. (beat) The
-engine, the web service, the page, the data steps — (beat) each in its own spot. (pause) Around forty
-automated tests, it runs in Docker, and the README walks through all the thinking. (pause)
+A quick word on the code. (pause) It's tidy and split up well — (pause) the engine, the web service, the
+page, and the data steps each have their own place. (pause) There are about forty tests, it runs in Docker,
+and the README explains the thinking. (pause)
 
-And — okay, the one honest catch. (beat) Square footage. (pause) Your team mentioned matching within twenty
-percent on size. (beat) Thing is — the public data only gives me *lot* size. (beat) Not the size of the
-actual house. (pause) So I use lot size, plus beds, baths, and value, as a stand-in — (beat) and I *named*
-it honestly, instead of pretending it's something it isn't. (pause) The day real floor-area data shows up?
-(beat) It slots in with about one line of code. (pause)
-
----
-
-### 7 · Wrap up  (8:10 – 8:45)
-*[SHOW: back on the app, the ranked list]*
-
-So... yeah. (beat) That's the tool. (pause) Good comps first, (beat) everything explained, (beat) and the
-underwriter still makes the final call. (pause) A solid place to *start* from — (beat) something you could
-actually trust. (beat) Not a black box. (pause)
-
-Thanks so much for watching. (beat) And honestly — I'd love to walk through any piece of it with you.
+And one honest catch: square footage. (pause) Your team mentioned size within twenty percent. (pause) But
+the public data only has *lot* size — not the size of the house itself. (pause) So I use lot size, plus
+beds, baths, and value, as a stand-in. (pause) And I named it honestly. (pause) The day real floor-size
+data shows up, it slots in with about one line of code. (pause)
 
 ---
 
-*Aim for about eight and a half minutes. If you're running long, section 6 (the code bit) is the safe one
-to trim — the demo itself is what carries it.*
+### 7 · Wrap up  (7:20 – 7:45)
+*[SHOW: back on the app, the list]*
+
+So that's the tool. (pause) Good similar sales first. Everything explained. And the underwriter still makes
+the final call. (pause) A solid place to start — and one you can trust. (pause) Not a black box. (pause)
+
+Thanks for watching. (pause) I'd be happy to walk through any part of it.
+
+---
+
+*Aim for about seven and a half minutes. If you run long, section 6 (the code bit) is the safe one to cut.*
