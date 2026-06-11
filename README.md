@@ -12,7 +12,9 @@
 ![Tests](https://img.shields.io/badge/tests-39%20passing-brightgreen)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
 
-🎥 **Demo video:** _add your Loom link here_ &nbsp;·&nbsp; 📋 Built for the KV Capital AI-Engineer hackathon
+### 🎥 [**Watch the demo (Loom)**](https://www.loom.com/share/23ac32065bef47f48d0be2b66b1780d9)
+
+📋 Built for the KV Capital AI-Engineer hackathon
 
 <!-- 📸 HERO SHOT: replace with the main app — subject card + ranked comps + map all visible. -->
 ![App overview](docs/screenshots/hero.png)
