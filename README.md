@@ -267,7 +267,7 @@ end-to-end against live Atlas (FastAPI `TestClient` + Streamlit `AppTest`). A li
 
 Judged on the five rubric dimensions: clean layered code with 39 tests; a grounded, machine-verified LLM;
 transparent scoring + honest data thinking; thorough docs + a Loom; and explicit scope choices.
-[`LOOM_SCRIPT.md`](LOOM_SCRIPT.md) is the < 10-min walkthrough.
+The < 10-min walkthrough is the [demo video](https://www.loom.com/share/23ac32065bef47f48d0be2b66b1780d9).
 
 ---
 
@@ -287,7 +287,7 @@ kv-comp-analysis/
 ├── data/                        # gitignored datasets (see data/README.md)
 ├── docs/screenshots/            # images used in this README
 ├── Dockerfile.api · Dockerfile.ui · docker-compose.yml
-└── README.md · README_API.md · LOOM_SCRIPT.md · pyproject.toml
+└── README.md · README_API.md · LoomVideo.md · pyproject.toml
 ```
 
 ---
